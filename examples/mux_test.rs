@@ -115,36 +115,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("  Created {} traces", traces.len());
 
-    // Wait for request from hermod-tracer
-    println!("\nWaiting for trace request from hermod-tracer...");
-    let msg = client.recv_message().await?;
+    // Protocol loop: keep handling requests until Done is received
+    // For testing, we'll handle a few requests then exit
+    println!("\nEntering protocol loop...");
+    let mut request_count = 0;
+    const MAX_REQUESTS: usize = 3; // Handle 3 requests then exit for testing
 
-    match msg {
-        Message::TraceObjectsRequest(req) => {
-            println!(
-                "  Received request for {} traces (blocking: {})",
-                req.number_of_trace_objects, req.blocking
-            );
+    loop {
+        println!("\nWaiting for message from hermod-tracer...");
 
-            // Send traces
-            println!("\nSending traces...");
-            let reply = Message::TraceObjectsReply(MsgTraceObjectsReply {
-                trace_objects: traces,
-            });
+        // Use a timeout so we can exit if no more requests come
+        let msg = tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            client.recv_message()
+        ).await;
 
-            client.send_message(&reply).await?;
-            println!("  ✓ Sent {} traces!", 3);
-        }
-        _ => {
-            eprintln!("  ✗ Unexpected message: {:?}", msg);
-            return Err("Unexpected message".into());
+        match msg {
+            Ok(Ok(Message::TraceObjectsRequest(req))) => {
+                request_count += 1;
+                println!(
+                    "  [Request #{}] Received request for {} traces (blocking: {})",
+                    request_count, req.number_of_trace_objects, req.blocking
+                );
+
+                // Send traces - we'll send our 3 test traces
+                // In a real implementation, you'd pull from a queue or generate new traces
+                println!("  Sending {} traces...", traces.len());
+                let reply = Message::TraceObjectsReply(MsgTraceObjectsReply {
+                    trace_objects: traces.clone(),
+                });
+
+                client.send_message(&reply).await?;
+                println!("  ✓ Sent reply with {} traces!", traces.len());
+
+                // For testing, exit after handling MAX_REQUESTS
+                if request_count >= MAX_REQUESTS {
+                    println!("  Handled {} requests, exiting test...", MAX_REQUESTS);
+                    break;
+                }
+            }
+            Ok(Ok(Message::Done)) => {
+                println!("  Received Done message - acceptor terminated session");
+                break;
+            }
+            Ok(Ok(_)) => {
+                eprintln!("  ✗ Unexpected message");
+                return Err("Unexpected message".into());
+            }
+            Ok(Err(e)) => {
+                eprintln!("  ✗ Error receiving message: {}", e);
+                return Err(e.into());
+            }
+            Err(_) => {
+                println!("  Timeout waiting for next message - acceptor may be idle");
+                break;
+            }
         }
     }
 
-    println!("\n✓ Test completed successfully!");
+    println!("\n✓ Protocol loop completed successfully!");
+    println!("  Total requests handled: {}", request_count);
     println!("\nCheck /tmp/hermod-tracer-test-logs/ for received traces");
 
-    // Give time for traces to be processed
+    // Give time for traces to be processed and written to disk
+    println!("\nWaiting 2 seconds for traces to be written...");
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     Ok(())

@@ -71,8 +71,36 @@ Our implementation correctly implements the **trace-forward mini-protocol** but 
    - ✅ Connection established and handshake successful
    - ✅ Trace requests correctly decoded (100 traces requested)
    - ✅ Trace objects sent successfully (3 traces sent)
-   - ⚠️  Traces not yet appearing in log files (investigation ongoing)
-   - ⚠️  Warnings about unregistered EKG/DataPoint protocols (may be optional)
+   - ✅ Cardano-tracer receives and processes messages without errors
+   - ✅ Protocol loop implemented correctly (handles multiple requests)
+   - ❌ Traces not appearing in log files (CBOR encoding investigation needed)
+
+### Known Issues
+
+**Traces Not Appearing in Logs**
+
+Despite successful protocol communication, traces aren't written to log files.
+
+**What Works:**
+- ✅ Protocol loop correctly implemented (waits for multiple requests)
+- ✅ Cardano-tracer accepts connections and recognizes node
+- ✅ Messages encode/decode successfully
+- ✅ No errors in hermod-tracer logs
+- ✅ Confirmed protocol numbers: Handshake=0, EKG=1, TraceObject=2, DataPoint=3
+
+**Investigation Findings:**
+1. **Protocol Loop**: Acceptor (hermod-tracer) continuously sends requests until `shouldWeStop`. Our implementation correctly handles this loop with timeout.
+2. **Handler Call**: `traceObjectsHandler` returns early if trace list is empty (line 37 of TraceObjects.hs). Since we're sending 3 traces, handler should be called.
+3. **Unregistered Protocol Warnings**: Pallas reports messages on protocols 32769 (0x8001) and 32771 (0x8003) - these are EKG and DataPoint with initiator flags.
+
+**Likely Cause:**
+Subtle CBOR encoding difference in TraceObject causing hermod-tracer to decode an empty list. The message structure is correct, but field-level encoding may differ.
+
+**Next Steps:**
+1. Compare CBOR bytes of Rust TraceObject with Haskell TraceObject
+2. Add wire-level debugging to see exact bytes sent/received
+3. Verify timestamp encoding (CBOR tag 1 with f64)
+4. Check Maybe/Option encoding for `to_human` field
 
 ### Key Discovery: Haskell Generic Serialise Encoding
 
