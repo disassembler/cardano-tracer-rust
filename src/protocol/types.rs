@@ -38,7 +38,8 @@ impl Encode<()> for Severity {
         e: &mut pallas_codec::minicbor::Encoder<W>,
         _ctx: &mut (),
     ) -> Result<(), pallas_codec::minicbor::encode::Error<W::Error>> {
-        e.u8(*self as u8)?;
+        // Haskell Generic Serialise for nullary constructors: array(1)[constructor_index]
+        e.array(1)?.u8(*self as u8)?;
         Ok(())
     }
 }
@@ -48,6 +49,7 @@ impl<'b> Decode<'b, ()> for Severity {
         d: &mut pallas_codec::minicbor::Decoder<'b>,
         _ctx: &mut (),
     ) -> Result<Self, pallas_codec::minicbor::decode::Error> {
+        d.array()?;
         let val = d.u8()?;
         match val {
             0 => Ok(Severity::Debug),
@@ -100,7 +102,8 @@ impl Encode<()> for DetailLevel {
         e: &mut pallas_codec::minicbor::Encoder<W>,
         _ctx: &mut (),
     ) -> Result<(), pallas_codec::minicbor::encode::Error<W::Error>> {
-        e.u8(*self as u8)?;
+        // Haskell Generic Serialise for nullary constructors: array(1)[constructor_index]
+        e.array(1)?.u8(*self as u8)?;
         Ok(())
     }
 }
@@ -110,6 +113,7 @@ impl<'b> Decode<'b, ()> for DetailLevel {
         d: &mut pallas_codec::minicbor::Decoder<'b>,
         _ctx: &mut (),
     ) -> Result<Self, pallas_codec::minicbor::decode::Error> {
+        d.array()?;
         let val = d.u8()?;
         match val {
             0 => Ok(DetailLevel::DMinimal),
@@ -162,8 +166,11 @@ impl Encode<()> for TraceObject {
         e: &mut pallas_codec::minicbor::Encoder<W>,
         ctx: &mut (),
     ) -> Result<(), pallas_codec::minicbor::encode::Error<W::Error>> {
-        // Encode as an 8-element array matching the Haskell record order
-        e.array(8)?;
+        // Haskell Generic Serialise for a product type with N fields:
+        // array(N+1)[constructor_index, field1, ..., fieldN]
+        // TraceObject has 8 fields, constructor index 0.
+        e.array(9)?;
+        e.u8(0)?;
 
         // toHuman :: Maybe Text
         match &self.to_human {
@@ -214,11 +221,13 @@ impl<'b> Decode<'b, ()> for TraceObject {
         ctx: &mut (),
     ) -> Result<Self, pallas_codec::minicbor::decode::Error> {
         let len = d.array()?;
-        if len != Some(8) {
+        if len != Some(9) {
             return Err(pallas_codec::minicbor::decode::Error::message(
-                "TraceObject must have 8 fields",
+                "TraceObject must have 9 elements (constructor index + 8 fields)",
             ));
         }
+        // Skip constructor index
+        let _constructor_idx = d.u8()?;
 
         // toHuman :: Maybe Text
         let to_human = {
