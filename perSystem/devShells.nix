@@ -27,6 +27,7 @@
 
           # Utilities
           jq
+          just
           fd
           ripgrep
 
@@ -44,10 +45,7 @@
           echo "Rust: $(rustc --version)"
           echo "Cargo: $(cargo --version)"
           echo ""
-          echo "Commands:"
-          echo "  cargo build              # Build the project"
-          echo "  cargo test               # Run tests"
-          echo "  cargo run                # Run the tracer"
+          echo "Run 'just' to list available commands."
         '';
       };
   };
