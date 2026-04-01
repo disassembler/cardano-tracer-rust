@@ -183,23 +183,25 @@ async fn handle_connection(
     let mut plexer = Plexer::new(bearer);
 
     let (handshake_ch, trace_ch, ekg_ch, dp_ch) = if is_initiator {
-        // We dialled out: we are the client (subscribe_client for initiator protocols)
-        // Trace-forward: acceptor is initiator → subscribe_client(TRACE_OBJECT)
-        // EKG: acceptor is responder → subscribe_server(EKG)
-        // DataPoint: acceptor is responder → subscribe_server(DATA_POINT)
+        // We dialled out: we are the TCP client (InitiatorDir = no high bit).
+        // subscribe_client(N): sends on N, receives on N|0x8000.
+        // All protocols use the TCP-client sender direction for their requests/sends.
         (
             plexer.subscribe_client(PROTOCOL_HANDSHAKE),
             plexer.subscribe_client(PROTOCOL_TRACE_OBJECT),
-            plexer.subscribe_server(PROTOCOL_EKG),
-            plexer.subscribe_server(PROTOCOL_DATA_POINT),
+            plexer.subscribe_client(PROTOCOL_EKG),
+            plexer.subscribe_client(PROTOCOL_DATA_POINT),
         )
     } else {
-        // They dialled in: we are the server
+        // They dialled in: we are the TCP server (ResponderDir = high bit).
+        // subscribe_server(N): receives on N (from TCP client), sends on N|0x8000.
+        // The forwarder (TCP client) uses InitiatorMode for all protocols, so it
+        // sends all frames on protocol N (no high bit).  We must receive on N.
         (
             plexer.subscribe_server(PROTOCOL_HANDSHAKE),
             plexer.subscribe_server(PROTOCOL_TRACE_OBJECT),
-            plexer.subscribe_client(PROTOCOL_EKG),
-            plexer.subscribe_client(PROTOCOL_DATA_POINT),
+            plexer.subscribe_server(PROTOCOL_EKG),
+            plexer.subscribe_server(PROTOCOL_DATA_POINT),
         )
     };
 
@@ -253,9 +255,15 @@ async fn handle_connection(
         }
     }
 
+    // Resolve the node's display name by requesting its NodeInfo DataPoint.
+    // Falls back to the connection-address node_id if the request times out
+    // or the node does not provide a name.
+    let mut dp_client = DataPointClient::new(dp_ch);
+    let node_name = resolve_node_name(&mut dp_client, &node_id).await;
+
     // Register node
-    let node = state.register(node_id.clone()).await;
-    info!("Node connected: {} (slug={})", node_id, node.slug);
+    let node = state.register(node_id.clone(), node_name).await;
+    info!("Node connected: {} name={} (slug={})", node_id, node.name, node.slug);
 
     // Launch sub-tasks in a JoinSet so we can cancel on first exit
     let mut tasks: JoinSet<()> = JoinSet::new();
@@ -306,11 +314,10 @@ async fn handle_connection(
         drop(ekg_ch);
     }
 
-    // --- DataPoint idle loop ---
+    // --- DataPoint idle loop (reuses the client we already created) ---
     {
         tasks.spawn(async move {
-            let client = DataPointClient::new(dp_ch);
-            client.run_idle_loop().await;
+            dp_client.run_idle_loop().await;
         });
     }
 
@@ -323,4 +330,37 @@ async fn handle_connection(
     info!("Node disconnected: {}", node_id);
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// NodeInfo name resolution
+// ---------------------------------------------------------------------------
+
+/// Request `"NodeInfo"` from the node's DataPoint channel and extract the
+/// `niName` field.  Returns the name on success, or `fallback` if the
+/// request times out, fails, or returns an empty name.
+///
+/// This matches the Haskell `cardano-tracer` behaviour: the `NodeName` used
+/// for log directory names, Prometheus slugs, and service-discovery labels
+/// is taken from `niName` in the `NodeInfo` DataPoint, not the raw connection
+/// address.
+async fn resolve_node_name(dp: &mut DataPointClient, fallback: &str) -> String {
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        dp.request(vec!["NodeInfo".to_string()]),
+    )
+    .await;
+
+    result
+        .ok()
+        .and_then(|r| r.ok())
+        .and_then(|items| {
+            items
+                .into_iter()
+                .find(|(name, _)| name == "NodeInfo")
+                .and_then(|(_, val)| val)
+                .and_then(|v| v.get("niName")?.as_str().map(|s| s.to_string()))
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
 }

@@ -32,8 +32,8 @@ pub async fn handle_traces(
     // --- File logging ---
     for params in logging_params {
         if params.log_mode == LogMode::FileMode {
-            if let Err(e) = writer.write_traces(&node.id, params, &traces) {
-                warn!("Log write error for node {}: {}", node.id, e);
+            if let Err(e) = writer.write_traces(&node.name, params, &traces) {
+                warn!("Log write error for node {}: {}", node.name, e);
             }
         }
         // JournalMode: not implemented on this platform; skip silently

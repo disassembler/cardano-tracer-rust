@@ -101,8 +101,8 @@ impl TraceAcceptor {
         // Acceptor mirrors the forwarder's subscriptions
         let handshake_channel = plexer.subscribe_server(PROTOCOL_HANDSHAKE);
         let trace_channel = plexer.subscribe_server(PROTOCOL_TRACE_OBJECT);
-        let _ekg_channel = plexer.subscribe_client(PROTOCOL_EKG);
-        let _datapoint_channel = plexer.subscribe_client(PROTOCOL_DATA_POINT);
+        let _ekg_channel = plexer.subscribe_server(PROTOCOL_EKG);
+        let _datapoint_channel = plexer.subscribe_server(PROTOCOL_DATA_POINT);
 
         let _plexer_handle = plexer.spawn();
 

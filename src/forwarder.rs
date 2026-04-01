@@ -9,6 +9,7 @@ use crate::mux::{
     PROTOCOL_HANDSHAKE, PROTOCOL_TRACE_OBJECT,
 };
 use crate::protocol::TraceObject;
+use crate::server::datapoint::DataPointMessage;
 use pallas_network::multiplexer::{Bearer, ChannelBuffer, Plexer};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -153,10 +154,33 @@ impl TraceForwarder {
 
         let handshake_channel = plexer.subscribe_client(PROTOCOL_HANDSHAKE);
         let trace_channel = plexer.subscribe_client(PROTOCOL_TRACE_OBJECT);
-        let _ekg_channel = plexer.subscribe_server(PROTOCOL_EKG);
-        let _datapoint_channel = plexer.subscribe_server(PROTOCOL_DATA_POINT);
+        let _ekg_channel = plexer.subscribe_client(PROTOCOL_EKG);
+        let datapoint_channel = plexer.subscribe_client(PROTOCOL_DATA_POINT);
 
         let _plexer_handle = plexer.spawn();
+
+        // Respond to DataPoint requests with empty replies.
+        // The acceptor may request "NodeInfo" to resolve our display name;
+        // we reply with None for each requested name so it falls back to the
+        // connection-address node ID.
+        tokio::spawn(async move {
+            let mut buf = ChannelBuffer::new(datapoint_channel);
+            loop {
+                match buf.recv_full_msg::<DataPointMessage>().await {
+                    Ok(DataPointMessage::Request(names)) => {
+                        let reply: Vec<_> = names.into_iter().map(|n| (n, None)).collect();
+                        if buf
+                            .send_msg_chunks(&DataPointMessage::Reply(reply))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        });
 
         // Perform handshake
         let mut hs_buf = ChannelBuffer::new(handshake_channel);

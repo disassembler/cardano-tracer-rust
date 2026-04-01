@@ -797,3 +797,123 @@ fn test_timestamp_uses_tag_1000() {
         diff
     );
 }
+
+/// Haskell forwarder → Rust DataPoint client: round-trip request/reply.
+///
+/// Manually sets up the mux, performs the Ouroboros handshake, then issues a
+/// DataPoint request for `"test.data.point"` to `demo-forwarder`.  Verifies:
+/// 1. The reply arrives without error.
+/// 2. The `"test.data.point"` entry has a non-`None` JSON value.
+/// 3. The JSON value has a `"tdpName"` field (from `TestDataPoint`).
+///
+/// `demo-forwarder` stores a `TestDataPoint { tdpName, tdpCommit, tdpVersion }`
+/// value under `"test.data.point"`.  Real Cardano nodes provide `"NodeInfo"`
+/// with a `niName` field; that key is what `hermod-tracer` uses to resolve the
+/// human-friendly node name for log directories and Prometheus routes.
+///
+/// This test also exercises the correct mux channel assignment: the TCP server
+/// (acceptor) must use `subscribe_server(N)` so it receives frames on protocol
+/// N (sent by the TCP client in `InitiatorDir`) and replies on N|0x8000.
+#[tokio::test]
+async fn test_haskell_forwarder_datapoint_round_trip() {
+    use hermod::mux::{
+        version_table_v1, ForwardingVersionData, HandshakeMessage, PROTOCOL_DATA_POINT,
+        PROTOCOL_EKG, PROTOCOL_HANDSHAKE, PROTOCOL_TRACE_OBJECT,
+    };
+    use hermod::server::datapoint::DataPointClient;
+    use pallas_network::multiplexer::{Bearer, ChannelBuffer, Plexer};
+    use tokio::net::UnixListener;
+
+    init_tracing();
+    let demo_forwarder = match find_binary("demo-forwarder") {
+        Some(p) => p,
+        None => {
+            eprintln!("SKIP: demo-forwarder not found on PATH — run `nix develop`");
+            return;
+        }
+    };
+
+    let socket = test_socket();
+    let _ = std::fs::remove_file(&socket);
+
+    // Bind the socket before spawning demo-forwarder so it can connect immediately.
+    let listener = UnixListener::bind(&socket).expect("bind socket");
+
+    let child = std::process::Command::new(&demo_forwarder)
+        .args([socket.to_str().unwrap(), "Initiator"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn demo-forwarder");
+    let _child_guard = AutoKillChild(child);
+
+    // Accept the connection
+    let (bearer, _) = Bearer::accept_unix(&listener)
+        .await
+        .expect("accept connection");
+
+    // Set up the mux.  We are the TCP server (responder).
+    // subscribe_server(N): receives on N (InitiatorDir, from TCP client),
+    //                      sends on N|0x8000 (ResponderDir, from TCP server).
+    // demo-forwarder uses InitiatorMode for all protocols so it sends on N
+    // and receives on N|0x8000 — matching subscribe_server on our side.
+    let mut plexer = Plexer::new(bearer);
+    let hs_ch = plexer.subscribe_server(PROTOCOL_HANDSHAKE);
+    let _trace_ch = plexer.subscribe_server(PROTOCOL_TRACE_OBJECT);
+    let _ekg_ch = plexer.subscribe_server(PROTOCOL_EKG);
+    let dp_ch = plexer.subscribe_server(PROTOCOL_DATA_POINT);
+    let _plexer = plexer.spawn();
+
+    // Handshake: we receive Propose, send Accept
+    let mut hs = ChannelBuffer::new(hs_ch);
+    let network_magic = 42u64;
+    let versions = version_table_v1(network_magic);
+    let msg: HandshakeMessage = hs.recv_full_msg().await.expect("recv Propose");
+    match msg {
+        HandshakeMessage::Propose(proposed) => {
+            let ver = proposed
+                .keys()
+                .filter(|v| versions.contains_key(v))
+                .max()
+                .copied()
+                .expect("no compatible version");
+            hs.send_msg_chunks(&HandshakeMessage::Accept(
+                ver,
+                ForwardingVersionData { network_magic },
+            ))
+            .await
+            .expect("send Accept");
+        }
+        other => panic!("expected Propose, got {:?}", other),
+    }
+
+    // Request the test DataPoint.  demo-forwarder stores a TestDataPoint value
+    // under "test.data.point": { tdpName, tdpCommit, tdpVersion }.
+    let mut dp = DataPointClient::new(dp_ch);
+    let result = timeout(
+        Duration::from_secs(5),
+        dp.request(vec!["test.data.point".to_string()]),
+    )
+    .await
+    .expect("DataPoint request timed out")
+    .expect("DataPoint request failed");
+
+    // Verify the reply contains the requested key
+    let (_, value) = result
+        .into_iter()
+        .find(|(name, _)| name == "test.data.point")
+        .expect("test.data.point key missing from DataPoint reply");
+
+    // demo-forwarder stores a non-None value for this key
+    let value =
+        value.expect("test.data.point value was None — demo-forwarder should have stored it");
+
+    // Verify the JSON has the expected tdpName field from TestDataPoint
+    assert!(
+        value.get("tdpName").is_some(),
+        "tdpName field missing from test.data.point value: {:?}",
+        value
+    );
+
+    eprintln!("demo-forwarder test.data.point = {:?}", value);
+}

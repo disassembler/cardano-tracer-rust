@@ -28,9 +28,14 @@ pub type NodeSlug = String;
 
 /// All state associated with one connected node
 pub struct NodeState {
-    /// The node's identity string
+    /// The node's connection address (internal key — not shown to users)
     pub id: NodeId,
-    /// URL-safe slug for use in Prometheus routes
+    /// Human-friendly display name from the node's `NodeInfo` DataPoint
+    /// (`niName`). Falls back to the raw `NodeId` if the DataPoint request
+    /// fails or returns an empty name.
+    pub name: String,
+    /// URL-safe slug derived from `name`, used in Prometheus routes and as
+    /// the log subdirectory name
     pub slug: NodeSlug,
     /// This node's dedicated Prometheus registry
     pub registry: Arc<Registry>,
@@ -41,12 +46,16 @@ pub struct NodeState {
 }
 
 impl NodeState {
-    /// Create new node state for the given node ID
-    pub fn new(id: NodeId) -> Self {
-        let slug = slugify(&id);
+    /// Create new node state.
+    ///
+    /// `id` is the connection address (internal key).
+    /// `name` is the display name (from `NodeInfo.niName`, fallback to `id`).
+    pub fn new(id: NodeId, name: String) -> Self {
+        let slug = slugify(&name);
         let registry = Arc::new(Registry::new());
         NodeState {
             id,
+            name,
             slug,
             registry,
             connected_at: Instant::now(),
@@ -72,9 +81,12 @@ impl TracerState {
         }
     }
 
-    /// Register a node; returns the new NodeState
-    pub async fn register(&self, id: NodeId) -> Arc<NodeState> {
-        let node = Arc::new(NodeState::new(id.clone()));
+    /// Register a node; returns the new NodeState.
+    ///
+    /// `name` is the display name (from `NodeInfo.niName`).  Pass the same
+    /// value as `id` when no name has been resolved yet.
+    pub async fn register(&self, id: NodeId, name: String) -> Arc<NodeState> {
+        let node = Arc::new(NodeState::new(id.clone(), name));
         self.nodes.write().await.insert(id, node.clone());
         node
     }
@@ -84,13 +96,16 @@ impl TracerState {
         self.nodes.write().await.shift_remove(id);
     }
 
-    /// Get a snapshot of connected nodes (id → slug)
-    pub async fn node_list(&self) -> Vec<(NodeId, NodeSlug)> {
+    /// Get a snapshot of connected nodes as (name, slug) pairs.
+    ///
+    /// `name` is the human-friendly display name (from `NodeInfo.niName`);
+    /// `slug` is the URL-safe Prometheus route segment derived from it.
+    pub async fn node_list(&self) -> Vec<(String, NodeSlug)> {
         self.nodes
             .read()
             .await
             .values()
-            .map(|n| (n.id.clone(), n.slug.clone()))
+            .map(|n| (n.name.clone(), n.slug.clone()))
             .collect()
     }
 

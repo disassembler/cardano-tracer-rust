@@ -82,29 +82,68 @@ impl<'b> Decode<'b, ()> for DataPointMessage {
             }
             2 => Ok(DataPointMessage::Done),
             3 => {
-                let len = d.array()?;
-                let count = len.unwrap_or(0);
+                // The Haskell `serialise` library encodes non-empty lists as
+                // indefinite-length arrays (0x9F ... 0xFF).  We must handle
+                // both definite (Some(n)) and indefinite (None) cases.
+                let count = d.array()?;
                 let mut items = Vec::new();
-                for _ in 0..count {
-                    d.array()?;
-                    let name = d.str()?.to_string();
-                    let opt_len = d.array()?;
-                    let value = match opt_len {
-                        Some(0) => None,
-                        Some(1) => Some(d.bytes()?.to_vec()),
-                        _ => {
-                            return Err(minicbor::decode::Error::message(
-                                "invalid Maybe encoding in DataPointsReply",
-                            ))
+
+                match count {
+                    Some(n) => {
+                        for _ in 0..n {
+                            items.push(decode_reply_item(d)?);
                         }
-                    };
-                    items.push((name, value));
+                    }
+                    None => {
+                        // Indefinite array: read items until Break (0xFF).
+                        loop {
+                            if d.datatype()? == minicbor::data::Type::Break {
+                                d.skip()?; // consume the break token
+                                break;
+                            }
+                            items.push(decode_reply_item(d)?);
+                        }
+                    }
                 }
+
                 Ok(DataPointMessage::Reply(items))
             }
             _ => Err(minicbor::decode::Error::message("unknown DataPoint tag")),
         }
     }
+}
+
+/// Decode one `(DataPointName, Maybe LBS.ByteString)` item.
+///
+/// The Haskell `Serialise (a, b)` instance writes `array(2)[a, b]`.
+/// `Maybe LBS.ByteString` is `array(0)` for `Nothing` or `array(1)[bytes]`
+/// for `Just bs`.  The bytes may be indefinite-length (Haskell encodes
+/// `LBS.ByteString` via `encodeBytesIndef`), so we use `bytes_iter()` which
+/// handles both definite and indefinite byte strings.
+fn decode_reply_item(d: &mut Decoder<'_>) -> Result<(String, Option<Vec<u8>>), minicbor::decode::Error> {
+    d.array()?; // array(2) for the tuple
+    let name = d.str()?.to_string();
+
+    let maybe_len = d.array()?; // array(0) = Nothing, array(1) = Just
+    let value = match maybe_len {
+        Some(0) => None,
+        Some(1) => {
+            // Collect bytes from all chunks (handles both definite and
+            // indefinite-length byte strings from Haskell LBS.ByteString).
+            let mut buf = Vec::new();
+            for chunk in d.bytes_iter()? {
+                buf.extend_from_slice(chunk?);
+            }
+            Some(buf)
+        }
+        _ => {
+            return Err(minicbor::decode::Error::message(
+                "invalid Maybe encoding in DataPointsReply",
+            ))
+        }
+    };
+
+    Ok((name, value))
 }
 
 // ---------------------------------------------------------------------------

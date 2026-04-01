@@ -35,9 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handshake_channel = plexer.subscribe_client(PROTOCOL_HANDSHAKE);
     let trace_channel = plexer.subscribe_client(PROTOCOL_TRACE_OBJECT);
 
-    // Subscribe to EKG and DataPoint protocols as server (hermod-tracer will initiate)
-    let _ekg_channel = plexer.subscribe_server(PROTOCOL_EKG);
-    let _datapoint_channel = plexer.subscribe_server(PROTOCOL_DATA_POINT);
+    // Subscribe to EKG and DataPoint protocols as client (TCP initiator role)
+    let _ekg_channel = plexer.subscribe_client(PROTOCOL_EKG);
+    let _datapoint_channel = plexer.subscribe_client(PROTOCOL_DATA_POINT);
 
     // Spawn the multiplexer
     let _plexer_handle = plexer.spawn();
