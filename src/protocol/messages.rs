@@ -69,7 +69,10 @@ impl Encode<()> for Message {
     ) -> Result<(), encode::Error<W::Error>> {
         match self {
             Message::TraceObjectsRequest(req) => {
-                e.array(3)?.u16(1)?.bool(req.blocking)?.u16(req.number_of_trace_objects)?;
+                e.array(3)?
+                    .u16(1)?
+                    .bool(req.blocking)?
+                    .u16(req.number_of_trace_objects)?;
             }
             Message::TraceObjectsReply(reply) => {
                 e.array(2)?.u16(3)?;

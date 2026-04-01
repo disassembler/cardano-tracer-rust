@@ -60,7 +60,9 @@ impl<'b> Decode<'b, ()> for Severity {
             5 => Ok(Severity::Critical),
             6 => Ok(Severity::Alert),
             7 => Ok(Severity::Emergency),
-            _ => Err(pallas_codec::minicbor::decode::Error::message("invalid severity value")),
+            _ => Err(pallas_codec::minicbor::decode::Error::message(
+                "invalid severity value",
+            )),
         }
     }
 }
@@ -120,7 +122,9 @@ impl<'b> Decode<'b, ()> for DetailLevel {
             1 => Ok(DetailLevel::DNormal),
             2 => Ok(DetailLevel::DDetailed),
             3 => Ok(DetailLevel::DMaximum),
-            _ => Err(pallas_codec::minicbor::decode::Error::message("invalid detail level")),
+            _ => Err(pallas_codec::minicbor::decode::Error::message(
+                "invalid detail level",
+            )),
         }
     }
 }
@@ -235,7 +239,11 @@ impl<'b> Decode<'b, ()> for TraceObject {
             match opt_len {
                 Some(0) => None,
                 Some(1) => Some(d.str()?.to_string()),
-                _ => return Err(pallas_codec::minicbor::decode::Error::message("invalid Maybe encoding")),
+                _ => {
+                    return Err(pallas_codec::minicbor::decode::Error::message(
+                        "invalid Maybe encoding",
+                    ))
+                }
             }
         };
 

@@ -3,11 +3,11 @@
 //! This module implements the trace-forward protocol as an Ouroboros Network
 //! mini-protocol using the pallas-network multiplexer infrastructure.
 
-mod handshake;
 mod client;
+mod handshake;
 
-pub use handshake::*;
 pub use client::*;
+pub use handshake::*;
 
 // Protocol numbers for trace-forward (from Haskell trace-forward/src/Trace/Forward/Forwarding.hs)
 pub const PROTOCOL_HANDSHAKE: u16 = 0;

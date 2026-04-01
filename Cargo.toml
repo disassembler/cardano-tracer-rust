@@ -29,6 +29,11 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 thiserror = "1.0"
 
+# Dispatcher
+async-trait = "0.1"
+serde_yaml = "0.9"
+prometheus = { version = "0.13", features = ["process"] }
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

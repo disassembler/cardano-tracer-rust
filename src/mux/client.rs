@@ -56,10 +56,7 @@ impl TraceForwardClient {
     }
 
     /// Wait for a trace objects request from the acceptor and send traces
-    pub async fn handle_request(
-        &mut self,
-        traces: Vec<TraceObject>,
-    ) -> Result<(), ClientError> {
+    pub async fn handle_request(&mut self, traces: Vec<TraceObject>) -> Result<(), ClientError> {
         // Wait for request
         let msg = self.recv_message().await?;
 

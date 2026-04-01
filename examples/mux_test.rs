@@ -3,9 +3,12 @@
 //! This example connects to hermod-tracer via the Ouroboros Network mux protocol
 //! and sends trace objects.
 
-use hermod::mux::{version_table_v1, HandshakeMessage, TraceForwardClient, PROTOCOL_HANDSHAKE, PROTOCOL_TRACE_OBJECT, PROTOCOL_EKG, PROTOCOL_DATA_POINT};
-use hermod::protocol::{DetailLevel, Message, MsgTraceObjectsReply, Severity, TraceObject};
 use chrono::Utc;
+use hermod::mux::{
+    version_table_v1, HandshakeMessage, TraceForwardClient, PROTOCOL_DATA_POINT, PROTOCOL_EKG,
+    PROTOCOL_HANDSHAKE, PROTOCOL_TRACE_OBJECT,
+};
+use hermod::protocol::{DetailLevel, Message, MsgTraceObjectsReply, Severity, TraceObject};
 use pallas_network::multiplexer::{Bearer, Plexer};
 use std::path::PathBuf;
 
@@ -53,7 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response: HandshakeMessage = handshake_buf.recv_full_msg().await?;
     match response {
         HandshakeMessage::Accept(version, data) => {
-            println!("  ✓ Handshake accepted! Version: {}, Magic: {}", version, data.network_magic);
+            println!(
+                "  ✓ Handshake accepted! Version: {}, Magic: {}",
+                version, data.network_magic
+            );
         }
         HandshakeMessage::Refuse(versions) => {
             eprintln!("  ✗ Handshake refused: {:?}", versions);
@@ -75,10 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TraceObject {
             to_human: Some("Test trace #1 - Info".to_string()),
             to_machine: r#"{"test_number": 1, "message": "Test from Rust with mux"}"#.to_string(),
-            to_namespace: vec![
-                "hermod".to_string(),
-                "mux-test".to_string(),
-            ],
+            to_namespace: vec!["hermod".to_string(), "mux-test".to_string()],
             to_severity: Severity::Info,
             to_details: DetailLevel::DNormal,
             to_timestamp: Utc::now(),
@@ -88,10 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TraceObject {
             to_human: Some("Test trace #2 - Warning".to_string()),
             to_machine: r#"{"test_number": 2, "message": "Warning from mux test"}"#.to_string(),
-            to_namespace: vec![
-                "hermod".to_string(),
-                "mux-test".to_string(),
-            ],
+            to_namespace: vec!["hermod".to_string(), "mux-test".to_string()],
             to_severity: Severity::Warning,
             to_details: DetailLevel::DNormal,
             to_timestamp: Utc::now(),
@@ -101,10 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TraceObject {
             to_human: Some("Test trace #3 - Error".to_string()),
             to_machine: r#"{"test_number": 3, "message": "Error from mux test"}"#.to_string(),
-            to_namespace: vec![
-                "hermod".to_string(),
-                "mux-test".to_string(),
-            ],
+            to_namespace: vec!["hermod".to_string(), "mux-test".to_string()],
             to_severity: Severity::Error,
             to_details: DetailLevel::DDetailed,
             to_timestamp: Utc::now(),
@@ -125,10 +122,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\nWaiting for message from hermod-tracer...");
 
         // Use a timeout so we can exit if no more requests come
-        let msg = tokio::time::timeout(
-            tokio::time::Duration::from_secs(5),
-            client.recv_message()
-        ).await;
+        let msg =
+            tokio::time::timeout(tokio::time::Duration::from_secs(5), client.recv_message()).await;
 
         match msg {
             Ok(Ok(Message::TraceObjectsRequest(req))) => {

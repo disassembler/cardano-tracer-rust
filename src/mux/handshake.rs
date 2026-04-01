@@ -110,7 +110,9 @@ impl<'b> Decode<'b, ()> for HandshakeMessage {
 
         match label {
             0 => {
-                let map_len = d.map()?.ok_or_else(|| decode::Error::message("expected definite map"))?;
+                let map_len = d
+                    .map()?
+                    .ok_or_else(|| decode::Error::message("expected definite map"))?;
                 let mut versions = HashMap::new();
                 for _ in 0..map_len {
                     let version = d.decode()?;
@@ -125,7 +127,9 @@ impl<'b> Decode<'b, ()> for HandshakeMessage {
                 Ok(HandshakeMessage::Accept(version, data))
             }
             2 => {
-                let arr_len = d.array()?.ok_or_else(|| decode::Error::message("expected definite array"))?;
+                let arr_len = d
+                    .array()?
+                    .ok_or_else(|| decode::Error::message("expected definite array"))?;
                 let mut versions = Vec::new();
                 for _ in 0..arr_len {
                     versions.push(d.decode()?);

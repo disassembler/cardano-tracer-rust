@@ -4,9 +4,9 @@
 //! which connects to a hermod-tracer acceptor and sends trace objects.
 
 use crate::protocol::{
-    TraceObject,
     codec::{CodecError, FramedTraceObjectCodec},
     messages::{Message, MsgTraceObjectsReply},
+    TraceObject,
 };
 use futures::{SinkExt, StreamExt};
 use std::path::PathBuf;
