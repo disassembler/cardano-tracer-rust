@@ -1,11 +1,12 @@
 //! Prometheus HTTP server for `hermod-tracer`
 //!
-//! Exposes three routes:
+//! Exposes four routes:
 //!
 //! | Route | Description |
 //! |-------|-------------|
 //! | `GET /` | HTML listing of connected nodes; JSON when `Accept: application/json` |
 //! | `GET /targets` | [Prometheus HTTP service-discovery](https://prometheus.io/docs/prometheus/latest/http_sd/) JSON |
+//! | `GET /metrics` | Aggregate metrics from all connected nodes |
 //! | `GET /{slug}` | Per-node metrics in Prometheus text exposition format |
 //!
 //! The `/{slug}` path is derived from the node's connection address by
@@ -61,6 +62,7 @@ pub async fn run_prometheus_server(
     let app = Router::new()
         .route("/", get(handle_root))
         .route("/targets", get(handle_targets))
+        .route("/metrics", get(handle_all_metrics))
         .route("/:slug", get(handle_node_metrics))
         .with_state(ps);
 
@@ -135,6 +137,39 @@ async fn handle_targets(State(ps): State<PrometheusState>) -> impl IntoResponse 
         .collect();
 
     Json(targets)
+}
+
+/// GET /metrics — aggregate Prometheus metrics from all connected nodes
+async fn handle_all_metrics(State(ps): State<PrometheusState>) -> Response {
+    let nodes = ps.tracer_state.all_nodes().await;
+    let encoder = prometheus::TextEncoder::new();
+    let mut output = String::new();
+
+    for node in &nodes {
+        let metric_families = node.registry.gather();
+        let mut buf = Vec::new();
+        if let Err(e) = encoder.encode(&metric_families, &mut buf) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Encode error: {}", e),
+            )
+                .into_response();
+        }
+        let mut text = String::from_utf8_lossy(&buf).into_owned();
+        if ps.no_suffix {
+            text = strip_prometheus_suffixes(text);
+        }
+        output.push_str(&text);
+    }
+
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        output,
+    )
+        .into_response()
 }
 
 /// GET /:slug — per-node Prometheus metrics

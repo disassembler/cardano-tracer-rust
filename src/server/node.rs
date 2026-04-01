@@ -14,8 +14,9 @@
 
 use crate::server::config::TracerConfig;
 use indexmap::IndexMap;
-use prometheus::Registry;
-use std::sync::Arc;
+use prometheus::{GaugeVec, Registry};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -35,6 +36,8 @@ pub struct NodeState {
     pub registry: Arc<Registry>,
     /// When this node connected
     pub connected_at: Instant,
+    /// Cache of Prometheus gauges derived from incoming trace object fields
+    pub trace_gauge_cache: Mutex<HashMap<String, GaugeVec>>,
 }
 
 impl NodeState {
@@ -47,6 +50,7 @@ impl NodeState {
             slug,
             registry,
             connected_at: Instant::now(),
+            trace_gauge_cache: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -98,6 +102,11 @@ impl TracerState {
             .values()
             .find(|n| n.slug == slug)
             .cloned()
+    }
+
+    /// Return all currently-connected nodes
+    pub async fn all_nodes(&self) -> Vec<Arc<NodeState>> {
+        self.nodes.read().await.values().cloned().collect()
     }
 }
 

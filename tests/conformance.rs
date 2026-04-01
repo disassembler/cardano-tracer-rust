@@ -647,6 +647,111 @@ async fn test_trace_object_encoding_round_trip() {
     }
 }
 
+/// Pure encoding: EKG protocol message format matches `ekg-forward` wire format.
+///
+/// Verifies byte-level CBOR for each `EkgMessage` variant so we catch any
+/// deviation from the Haskell `codecEKGForward` specification before
+/// running against a live Haskell node.
+///
+/// Expected bytes:
+/// - `MsgDone`                   → `\[0x81, 0x01\]`
+/// - `MsgReq(GetUpdatedMetrics)` → `\[0x82, 0x00, 0x81, 0x02\]`
+/// - `MsgReq(GetAllMetrics)`     → `\[0x82, 0x00, 0x81, 0x00\]`
+/// - `MsgResp(empty)`            → `\[0x82, 0x01, 0x82, 0x00, 0x80\]`
+#[test]
+fn test_ekg_message_encoding() {
+    use hermod::server::ekg::EkgMessage;
+    use pallas_codec::minicbor;
+    use std::collections::HashMap;
+
+    // MsgDone: array(1)[word(1)] = [0x81, 0x01]
+    {
+        let mut buf = Vec::new();
+        minicbor::encode_with(&EkgMessage::Done, &mut buf, &mut ()).unwrap();
+        assert_eq!(buf, &[0x81, 0x01], "MsgDone should be [0x81, 0x01]");
+    }
+
+    // MsgReq(false) = GetUpdatedMetrics: array(2)[word(0), array(1)[word(2)]]
+    {
+        let mut buf = Vec::new();
+        minicbor::encode_with(&EkgMessage::Req(false), &mut buf, &mut ()).unwrap();
+        assert_eq!(
+            buf,
+            &[0x82, 0x00, 0x81, 0x02],
+            "MsgReq(GetUpdatedMetrics) should be [0x82, 0x00, 0x81, 0x02]"
+        );
+    }
+
+    // MsgReq(true) = GetAllMetrics: array(2)[word(0), array(1)[word(0)]]
+    {
+        let mut buf = Vec::new();
+        minicbor::encode_with(&EkgMessage::Req(true), &mut buf, &mut ()).unwrap();
+        assert_eq!(
+            buf,
+            &[0x82, 0x00, 0x81, 0x00],
+            "MsgReq(GetAllMetrics) should be [0x82, 0x00, 0x81, 0x00]"
+        );
+    }
+
+    // MsgResp(empty): array(2)[word(1), array(2)[word(0), array(0)]]
+    {
+        let mut buf = Vec::new();
+        minicbor::encode_with(&EkgMessage::Resp(HashMap::new()), &mut buf, &mut ()).unwrap();
+        assert_eq!(
+            buf,
+            &[0x82, 0x01, 0x82, 0x00, 0x80],
+            "MsgResp(empty) should be [0x82, 0x01, 0x82, 0x00, 0x80]"
+        );
+    }
+}
+
+/// Pure encoding: EKG messages round-trip through CBOR encode → decode.
+///
+/// Does not require Haskell binaries.
+#[test]
+fn test_ekg_message_round_trip() {
+    use hermod::server::ekg::{EkgMessage, EkgValue};
+    use pallas_codec::minicbor;
+    use std::collections::HashMap;
+
+    let cases: Vec<EkgMessage> = vec![
+        EkgMessage::Done,
+        EkgMessage::Req(false),
+        EkgMessage::Req(true),
+        EkgMessage::Resp(HashMap::new()),
+        EkgMessage::Resp({
+            let mut m = HashMap::new();
+            m.insert("rts.gc.num_gcs".to_string(), EkgValue::Counter(42));
+            m.insert("rts.gc.live_bytes".to_string(), EkgValue::Gauge(1024));
+            m.insert("node.version".to_string(), EkgValue::Label("1.35.0".to_string()));
+            m
+        }),
+    ];
+
+    for (i, msg) in cases.into_iter().enumerate() {
+        let mut buf = Vec::new();
+        minicbor::encode_with(&msg, &mut buf, &mut ())
+            .unwrap_or_else(|e| panic!("case {}: encode failed: {}", i, e));
+
+        let decoded: EkgMessage = minicbor::decode_with(&buf, &mut ())
+            .unwrap_or_else(|e| panic!("case {}: decode failed: {}", i, e));
+
+        match (&msg, &decoded) {
+            (EkgMessage::Done, EkgMessage::Done) => {}
+            (EkgMessage::Req(a), EkgMessage::Req(b)) => {
+                assert_eq!(a, b, "case {}: Req get_all mismatch", i);
+            }
+            (EkgMessage::Resp(a), EkgMessage::Resp(b)) => {
+                assert_eq!(a.len(), b.len(), "case {}: Resp len mismatch", i);
+                for (k, _) in a {
+                    assert!(b.contains_key(k), "case {}: Resp missing key {}", i, k);
+                }
+            }
+            _ => panic!("case {}: variant mismatch after round-trip", i),
+        }
+    }
+}
+
 /// Pure encoding: timestamp tag-1000 format is used and preserves precision.
 ///
 /// Verifies that our encoder writes CBOR tag 1000 (not tag 1) and that the

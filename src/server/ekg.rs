@@ -3,17 +3,25 @@
 //! The acceptor side polls the connected forwarder node for EKG metrics and
 //! populates the node's Prometheus registry ([`NodeState::registry`]).
 //!
-//! ## Wire protocol (`ekg-forward` package)
+//! ## Wire protocol (`ekg-forward` package, `codecEKGForward`)
 //!
 //! ```text
-//! MsgReq(get_all: bool)  →  array(2)\[0, bool\]
-//! MsgResp(metrics)       →  array(2)\[1, map_of_name_value\]
-//! MsgDone                →  array(1)\[2\]
+//! MsgReq(GetAllMetrics)     →  array(2)\[word(0), array(1)\[word(0)\]\]
+//! MsgReq(GetUpdatedMetrics) →  array(2)\[word(0), array(1)\[word(2)\]\]
+//! MsgResp(metrics)          →  array(2)\[word(1), ResponseMetrics\]
+//! MsgDone                   →  array(1)\[word(1)\]
 //! ```
+//!
+//! `MsgDone` and `MsgResp` share tag `word(1)` and are distinguished by
+//! the outer array length (1 = Done, 2 = Resp).
 //!
 //! `get_all = false` requests only metrics that changed since the last poll;
 //! `get_all = true` requests the full snapshot.  Controlled by
 //! `ekgRequestFull` in the config.
+//!
+//! `ResponseMetrics` is a Haskell Generic Serialise newtype:
+//! `array(2)\[word(0), \[(text, value)...\]\]` where each pair is
+//! `array(2)\[text(name), metricvalue\]`.
 //!
 //! ## Metric value CBOR (`ekg-core` `Value` type, Generic Serialise)
 //!
@@ -101,18 +109,30 @@ impl Encode<()> for EkgMessage {
     ) -> Result<(), minicbor::encode::Error<W::Error>> {
         match self {
             EkgMessage::Req(get_all) => {
-                e.array(2)?.u8(0)?.bool(*get_all)?;
+                // array(2)[word(0), Request]
+                // GetAllMetrics = array(1)[word(0)], GetUpdatedMetrics = array(1)[word(2)]
+                e.array(2)?.u8(0)?;
+                if *get_all {
+                    e.array(1)?.u8(0)?; // GetAllMetrics
+                } else {
+                    e.array(1)?.u8(2)?; // GetUpdatedMetrics
+                }
             }
             EkgMessage::Resp(metrics) => {
+                // array(2)[word(1), ResponseMetrics]
+                // ResponseMetrics (Generic Serialise newtype): array(2)[word(0), list_of_pairs]
                 e.array(2)?.u8(1)?;
-                e.map(metrics.len() as u64)?;
+                e.array(2)?.u8(0)?;
+                e.array(metrics.len() as u64)?;
                 for (k, v) in metrics {
+                    e.array(2)?;
                     e.str(k)?;
                     v.encode(e, ctx)?;
                 }
             }
             EkgMessage::Done => {
-                e.array(1)?.u8(2)?;
+                // array(1)[word(1)]
+                e.array(1)?.u8(1)?;
             }
         }
         Ok(())
@@ -121,27 +141,39 @@ impl Encode<()> for EkgMessage {
 
 impl<'b> Decode<'b, ()> for EkgMessage {
     fn decode(d: &mut Decoder<'b>, ctx: &mut ()) -> Result<Self, minicbor::decode::Error> {
-        d.array()?;
+        let arr_len = d.array()?;
         let tag = d.u8()?;
-        match tag {
-            0 => {
-                let get_all = d.bool()?;
-                Ok(EkgMessage::Req(get_all))
+        // MsgDone and MsgResp share tag word(1); disambiguate by array length.
+        match (arr_len, tag) {
+            // MsgReq: array(2)[word(0), Request]
+            (Some(2), 0) => {
+                // Request sum type: array(1)[word(N)]
+                // 0 = GetAllMetrics, 2 = GetUpdatedMetrics
+                d.array()?;
+                let req_tag = d.u8()?;
+                Ok(EkgMessage::Req(req_tag == 0))
             }
-            1 => {
+            // MsgDone: array(1)[word(1)]
+            (Some(1), 1) => Ok(EkgMessage::Done),
+            // MsgResp: array(2)[word(1), ResponseMetrics]
+            (Some(2), 1) => {
+                // ResponseMetrics (Generic Serialise newtype): array(2)[word(0), list_of_pairs]
+                d.array()?;
+                d.u8()?; // constructor index 0
+                let list_len = d.array()?;
                 let mut metrics = HashMap::new();
-                // Map may be definite or indefinite
-                let map_len = d.map()?;
                 let mut count = 0u64;
                 loop {
-                    if map_len.is_none() {
+                    if list_len.is_none() {
                         if d.datatype()? == Type::Break {
                             d.skip()?;
                             break;
                         }
-                    } else if count >= map_len.unwrap() {
+                    } else if count >= list_len.unwrap() {
                         break;
                     }
+                    // Each element is array(2)[text(name), metricvalue]
+                    d.array()?;
                     let key = d.str()?.to_string();
                     let val = EkgValue::decode(d, ctx)?;
                     metrics.insert(key, val);
@@ -149,8 +181,7 @@ impl<'b> Decode<'b, ()> for EkgMessage {
                 }
                 Ok(EkgMessage::Resp(metrics))
             }
-            2 => Ok(EkgMessage::Done),
-            _ => Err(minicbor::decode::Error::message("unknown EKG tag")),
+            _ => Err(minicbor::decode::Error::message("unknown EKG message format")),
         }
     }
 }
