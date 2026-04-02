@@ -39,7 +39,7 @@ impl TraceForwardClient {
 
     /// Send a message to the acceptor
     pub async fn send_message(&mut self, msg: &Message) -> Result<(), ClientError> {
-        debug!("Sending message: {:?}", msg);
+        debug!("Sending message");
         self.channel
             .send_msg_chunks(msg)
             .await
@@ -54,7 +54,7 @@ impl TraceForwardClient {
             .recv_full_msg()
             .await
             .map_err(ClientError::Multiplexer)?;
-        debug!("Received message: {:?}", msg);
+        debug!("Received message");
         Ok(msg)
     }
 

@@ -34,7 +34,7 @@ impl TraceAcceptorClient {
         self.channel.send_msg_chunks(&req).await?;
 
         let msg: Message = self.channel.recv_full_msg().await?;
-        debug!("Received reply: {:?}", msg);
+        debug!("Received reply");
 
         match msg {
             Message::TraceObjectsReply(reply) => Ok(reply.trace_objects),
