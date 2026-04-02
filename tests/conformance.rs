@@ -920,3 +920,226 @@ async fn test_haskell_forwarder_datapoint_round_trip() {
 
     eprintln!("demo-forwarder test.data.point = {:?}", value);
 }
+
+/// Rust EKG poller → Haskell forwarder: receive live EKG metrics.
+///
+/// Spawns `demo-forwarder` as TCP Initiator (it connects to us). After the
+/// Ouroboros handshake we send `EkgMessage::Req(true)` (GetAllMetrics) on the
+/// EKG channel and verify the reply is either:
+/// - `EkgMessage::Resp(metrics)` with at least one metric entry, or
+/// - `EkgMessage::Done` (forwarder gracefully closed the session).
+///
+/// Channel direction: as TCP server we use `subscribe_server(EKG)`, which
+/// sends frames on protocol `1|0x8000` (ResponderDir → forwarder) and
+/// receives frames on protocol `1` (InitiatorDir ← forwarder).
+#[tokio::test]
+async fn test_haskell_forwarder_ekg_metrics() {
+    use hermod::mux::{
+        version_table_v1, ForwardingVersionData, HandshakeMessage, PROTOCOL_DATA_POINT,
+        PROTOCOL_EKG, PROTOCOL_HANDSHAKE, PROTOCOL_TRACE_OBJECT,
+    };
+    use hermod::server::ekg::EkgMessage;
+    use pallas_network::multiplexer::{Bearer, ChannelBuffer, Plexer};
+    use tokio::net::UnixListener;
+
+    init_tracing();
+    let demo_forwarder = match find_binary("demo-forwarder") {
+        Some(p) => p,
+        None => {
+            eprintln!("SKIP: demo-forwarder not found on PATH — run `nix develop`");
+            return;
+        }
+    };
+
+    let socket = test_socket();
+    let _ = std::fs::remove_file(&socket);
+
+    // Bind the socket before spawning so demo-forwarder can connect immediately.
+    let listener = UnixListener::bind(&socket).expect("bind socket");
+
+    let child = std::process::Command::new(&demo_forwarder)
+        .args([socket.to_str().unwrap(), "Initiator"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn demo-forwarder");
+    let _child_guard = AutoKillChild(child);
+
+    let (bearer, _) = Bearer::accept_unix(&listener)
+        .await
+        .expect("accept connection");
+
+    // TCP server (AcceptAt): subscribe_server for all protocols.
+    let mut plexer = Plexer::new(bearer);
+    let hs_ch = plexer.subscribe_server(PROTOCOL_HANDSHAKE);
+    let _trace_ch = plexer.subscribe_server(PROTOCOL_TRACE_OBJECT);
+    let ekg_ch = plexer.subscribe_server(PROTOCOL_EKG);
+    let _dp_ch = plexer.subscribe_server(PROTOCOL_DATA_POINT);
+    let _plexer = plexer.spawn();
+
+    // Handshake: receive Propose from demo-forwarder, send Accept.
+    let mut hs = ChannelBuffer::new(hs_ch);
+    let network_magic = 42u64;
+    let versions = version_table_v1(network_magic);
+    let msg: HandshakeMessage = hs.recv_full_msg().await.expect("recv Propose");
+    match msg {
+        HandshakeMessage::Propose(proposed) => {
+            let ver = proposed
+                .keys()
+                .filter(|v| versions.contains_key(v))
+                .max()
+                .copied()
+                .expect("no compatible version");
+            hs.send_msg_chunks(&HandshakeMessage::Accept(
+                ver,
+                ForwardingVersionData { network_magic },
+            ))
+            .await
+            .expect("send Accept");
+        }
+        other => panic!("expected Propose, got {:?}", other),
+    }
+
+    // Poll EKG: send Req(true) = GetAllMetrics and wait for the reply.
+    // We send on 1|0x8000 (server outgoing dir) and receive on 1 (client outgoing dir).
+    let mut ekg = ChannelBuffer::new(ekg_ch);
+    ekg.send_msg_chunks(&EkgMessage::Req(true))
+        .await
+        .expect("send EKG Req");
+
+    let response = timeout(Duration::from_secs(5), ekg.recv_full_msg::<EkgMessage>())
+        .await
+        .expect("EKG response timed out (5 s)")
+        .expect("EKG recv failed");
+
+    match response {
+        EkgMessage::Resp(metrics) => {
+            eprintln!(
+                "demo-forwarder EKG: {} metrics, first few: {:?}",
+                metrics.len(),
+                metrics.keys().take(5).collect::<Vec<_>>()
+            );
+            assert!(
+                !metrics.is_empty(),
+                "demo-forwarder returned an empty EKG metrics map"
+            );
+        }
+        EkgMessage::Done => {
+            // Acceptable: forwarder closed the EKG session gracefully.
+            eprintln!("demo-forwarder EKG replied with Done (session closed gracefully)");
+        }
+        EkgMessage::Req(_) => {
+            panic!("unexpected EkgMessage::Req received from forwarder");
+        }
+    }
+}
+
+/// Rust acceptor connects to Haskell forwarder in Responder (listen) mode.
+///
+/// Exercises the ConnectTo network topology: `hermod-tracer` dials out to a
+/// Cardano node that has a local Unix socket rather than connecting outward.
+/// In this mode hermod-tracer is the TCP client and must use `subscribe_client`
+/// for all four mini-protocols.
+///
+/// `demo-forwarder Responder` binds the socket and waits for an inbound
+/// connection. We connect, complete the handshake (send Propose, receive
+/// Accept), then use `TraceAcceptorClient` to send a blocking request and
+/// verify at least one `TraceObject` is returned.
+#[tokio::test]
+async fn test_connectto_haskell_forwarder_responder() {
+    use hermod::mux::{
+        version_table_v1, HandshakeMessage, TraceAcceptorClient, PROTOCOL_DATA_POINT,
+        PROTOCOL_EKG, PROTOCOL_HANDSHAKE, PROTOCOL_TRACE_OBJECT,
+    };
+    use pallas_network::multiplexer::{Bearer, ChannelBuffer, Plexer};
+
+    init_tracing();
+    let demo_forwarder = match find_binary("demo-forwarder") {
+        Some(p) => p,
+        None => {
+            eprintln!("SKIP: demo-forwarder not found on PATH — run `nix develop`");
+            return;
+        }
+    };
+
+    let socket = test_socket();
+    let _ = std::fs::remove_file(&socket);
+
+    // demo-forwarder Responder: it binds and listens on the socket.
+    let child = std::process::Command::new(&demo_forwarder)
+        .args([socket.to_str().unwrap(), "Responder"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn demo-forwarder");
+    let _child_guard = AutoKillChild(child);
+
+    assert!(
+        wait_for_socket(&socket, Duration::from_secs(10)).await,
+        "demo-forwarder Responder socket did not appear within 10 s"
+    );
+
+    // Connect as TCP client (ConnectTo mode).
+    let bearer = Bearer::connect_unix(&socket)
+        .await
+        .expect("connect to demo-forwarder");
+
+    // TCP client (ConnectTo): subscribe_client for all protocols.
+    let mut plexer = Plexer::new(bearer);
+    let hs_ch = plexer.subscribe_client(PROTOCOL_HANDSHAKE);
+    let trace_ch = plexer.subscribe_client(PROTOCOL_TRACE_OBJECT);
+    let _ekg_ch = plexer.subscribe_client(PROTOCOL_EKG);
+    let _dp_ch = plexer.subscribe_client(PROTOCOL_DATA_POINT);
+    let _plexer = plexer.spawn();
+
+    // Handshake: TCP client initiates by sending Propose, then receives Accept.
+    let mut hs = ChannelBuffer::new(hs_ch);
+    let network_magic = 42u64;
+    let versions = version_table_v1(network_magic);
+    hs.send_msg_chunks(&HandshakeMessage::Propose(versions))
+        .await
+        .expect("send Propose");
+
+    let response: HandshakeMessage = timeout(Duration::from_secs(5), hs.recv_full_msg())
+        .await
+        .expect("handshake Accept timed out (5 s)")
+        .expect("handshake recv failed");
+
+    match response {
+        HandshakeMessage::Accept(ver, data) => {
+            eprintln!(
+                "ConnectTo handshake accepted: version={}, magic={}",
+                ver, data.network_magic
+            );
+        }
+        HandshakeMessage::Refuse(offered) => {
+            panic!(
+                "handshake refused by demo-forwarder Responder; offered: {:?}",
+                offered
+            );
+        }
+        other => panic!("expected Accept, got {:?}", other),
+    }
+
+    // Request traces: TraceAcceptorClient sends a blocking TraceObjectsRequest
+    // and waits for TraceObjectsReply from the forwarder.
+    let mut trace_client = TraceAcceptorClient::new(trace_ch);
+    let traces = timeout(Duration::from_secs(10), trace_client.request_traces(10))
+        .await
+        .expect("trace request timed out (10 s)")
+        .expect("trace request failed");
+
+    assert!(
+        !traces.is_empty(),
+        "expected at least one trace from demo-forwarder Responder, got 0"
+    );
+    eprintln!(
+        "ConnectTo: received {} trace(s) from demo-forwarder Responder",
+        traces.len()
+    );
+    assert_eq!(
+        traces[0].to_namespace,
+        vec!["demoNamespace"],
+        "unexpected namespace from ConnectTo trace"
+    );
+}
