@@ -159,7 +159,7 @@ impl TraceConfig {
         let opts = self.forwarder.as_ref()?;
         let mut cfg = crate::forwarder::ForwarderConfig::default();
         if let Some(path) = &opts.socket_path {
-            cfg.socket_path = std::path::PathBuf::from(path);
+            cfg.address = crate::forwarder::ForwarderAddress::Unix(std::path::PathBuf::from(path));
         }
         if let Some(qs) = opts.queue_size {
             cfg.queue_size = qs as usize;

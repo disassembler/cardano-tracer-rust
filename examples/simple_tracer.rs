@@ -5,7 +5,7 @@
 //! 2. Integrate with Rust tracing
 //! 3. Send traces to hermod-tracer
 
-use hermod::forwarder::{ForwarderConfig, TraceForwarder};
+use hermod::forwarder::{ForwarderAddress, ForwarderConfig, TraceForwarder};
 use hermod::tracer::init_tracing_with_forwarder;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
@@ -15,7 +15,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Configure the forwarder
     let config = ForwarderConfig {
-        socket_path: PathBuf::from("/tmp/hermod-tracer.sock"),
+        address: ForwarderAddress::Unix(PathBuf::from("/tmp/hermod-tracer.sock")),
         queue_size: 1000,
         max_reconnect_delay: 45,
         network_magic: 764824073,

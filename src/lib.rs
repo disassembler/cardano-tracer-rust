@@ -15,7 +15,7 @@
 //! # Quick start — forwarding traces from your application
 //!
 //! ```no_run
-//! use hermod::forwarder::{ForwarderConfig, TraceForwarder};
+//! use hermod::forwarder::{ForwarderAddress, ForwarderConfig, TraceForwarder};
 //! use hermod::tracer::TracerBuilder;
 //! use std::path::PathBuf;
 //! use tracing_subscriber::prelude::*;
@@ -23,7 +23,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let config = ForwarderConfig {
-//!         socket_path: PathBuf::from("/tmp/hermod-tracer.sock"),
+//!         address: ForwarderAddress::Unix(PathBuf::from("/tmp/hermod-tracer.sock")),
 //!         network_magic: 764824073, // mainnet
 //!         ..Default::default()
 //!     };

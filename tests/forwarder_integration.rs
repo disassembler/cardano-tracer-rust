@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use hermod::acceptor::{AcceptorConfig, TraceAcceptor};
-use hermod::forwarder::{ForwarderConfig, TraceForwarder};
+use hermod::forwarder::{ForwarderAddress, ForwarderConfig, TraceForwarder};
 use hermod::protocol::{DetailLevel, Severity, TraceObject};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,7 +45,7 @@ async fn test_forwarder_sends_trace() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let forwarder = TraceForwarder::new(ForwarderConfig {
-        socket_path: socket,
+        address: ForwarderAddress::Unix(socket),
         network_magic: 0,
         max_reconnect_delay: 1,
         ..Default::default()
@@ -81,7 +81,7 @@ async fn test_forwarder_sends_multiple_traces() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let forwarder = TraceForwarder::new(ForwarderConfig {
-        socket_path: socket,
+        address: ForwarderAddress::Unix(socket),
         network_magic: 0,
         max_reconnect_delay: 1,
         ..Default::default()
@@ -133,7 +133,7 @@ async fn test_tracer_layer_integration() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let forwarder = TraceForwarder::new(ForwarderConfig {
-        socket_path: socket,
+        address: ForwarderAddress::Unix(socket),
         network_magic: 0,
         max_reconnect_delay: 1,
         ..Default::default()

@@ -209,6 +209,8 @@ pub struct EkgPoller {
     node_state: Arc<NodeState>,
     request_full: bool,
     gauge_cache: Mutex<HashMap<String, GaugeVec>>,
+    /// Gauges with a `value` label dimension, used for EKG Label metrics
+    label_gauge_cache: Mutex<HashMap<String, GaugeVec>>,
     counter_cache: Mutex<HashMap<String, IntCounterVec>>,
     counter_values: Mutex<HashMap<String, i64>>,
 }
@@ -225,6 +227,7 @@ impl EkgPoller {
             node_state,
             request_full,
             gauge_cache: Mutex::new(HashMap::new()),
+            label_gauge_cache: Mutex::new(HashMap::new()),
             counter_cache: Mutex::new(HashMap::new()),
             counter_values: Mutex::new(HashMap::new()),
         }
@@ -273,6 +276,7 @@ impl EkgPoller {
                 name,
                 value,
                 &self.gauge_cache,
+                &self.label_gauge_cache,
                 &self.counter_cache,
                 &self.counter_values,
             ) {
@@ -296,6 +300,7 @@ pub(crate) fn update_metric(
     name: &str,
     value: &EkgValue,
     gauge_cache: &Mutex<HashMap<String, GaugeVec>>,
+    label_gauge_cache: &Mutex<HashMap<String, GaugeVec>>,
     counter_cache: &Mutex<HashMap<String, IntCounterVec>>,
     counter_values: &Mutex<HashMap<String, i64>>,
 ) -> anyhow::Result<()> {
@@ -314,11 +319,14 @@ pub(crate) fn update_metric(
             let gauge = get_or_create_gauge(registry, gauge_cache, name)?;
             gauge.with_label_values(&[]).set(*v as f64);
         }
-        EkgValue::Label(_) => {
-            // Labels are text; store presence as gauge=1
-            let metric_name = format!("{}_label", name);
-            let gauge = get_or_create_gauge(registry, gauge_cache, &metric_name)?;
-            gauge.with_label_values(&[]).set(1.0);
+        EkgValue::Label(text) => {
+            // Expose label text using the Prometheus `{_info}` pattern:
+            // a GaugeVec with a `value` label dimension set to the text value
+            // and a gauge value of 1.0.
+            // e.g. `ekg_some_metric_info{value="RTS v1.0"} 1.0`
+            let metric_name = sanitise_name(&format!("{}_info", name));
+            let gauge = get_or_create_label_gauge(registry, label_gauge_cache, &metric_name)?;
+            gauge.with_label_values(&[text.as_str()]).set(1.0);
         }
     }
     Ok(())
@@ -360,6 +368,25 @@ fn get_or_create_counter(
         .map_err(|e| anyhow::anyhow!("register counter {}: {}", name, e))?;
     lock.insert(name.to_string(), c.clone());
     Ok(c)
+}
+
+fn get_or_create_label_gauge(
+    registry: &Registry,
+    cache: &Mutex<HashMap<String, GaugeVec>>,
+    name: &str,
+) -> anyhow::Result<GaugeVec> {
+    let mut lock = cache.lock().unwrap();
+    if let Some(g) = lock.get(name) {
+        return Ok(g.clone());
+    }
+    let opts = Opts::new(sanitise_name(name), name.to_string());
+    let g = GaugeVec::new(opts, &["value"])
+        .map_err(|e| anyhow::anyhow!("create label gauge {}: {}", name, e))?;
+    registry
+        .register(Box::new(g.clone()))
+        .map_err(|e| anyhow::anyhow!("register label gauge {}: {}", name, e))?;
+    lock.insert(name.to_string(), g.clone());
+    Ok(g)
 }
 
 fn sanitise_name(name: &str) -> String {

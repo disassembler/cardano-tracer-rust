@@ -4,6 +4,7 @@
 //! which connects to a hermod-tracer acceptor and sends trace objects via the
 //! Ouroboros Network multiplexer.
 
+use crate::dispatcher::backend::datapoint::DataPointStore;
 use crate::mux::{
     version_table_v1, HandshakeMessage, TraceForwardClient, PROTOCOL_DATA_POINT, PROTOCOL_EKG,
     PROTOCOL_HANDSHAKE, PROTOCOL_TRACE_OBJECT,
@@ -45,11 +46,35 @@ pub enum ForwarderError {
     QueueFull,
 }
 
+/// Address the forwarder should connect to
+#[derive(Debug, Clone)]
+pub enum ForwarderAddress {
+    /// Unix domain socket path
+    Unix(PathBuf),
+    /// TCP host and port
+    Tcp(String, u16),
+}
+
+impl Default for ForwarderAddress {
+    fn default() -> Self {
+        ForwarderAddress::Unix(PathBuf::from("/tmp/hermod-tracer.sock"))
+    }
+}
+
+impl std::fmt::Display for ForwarderAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ForwarderAddress::Unix(p) => write!(f, "{}", p.display()),
+            ForwarderAddress::Tcp(host, port) => write!(f, "{}:{}", host, port),
+        }
+    }
+}
+
 /// Configuration for the trace forwarder
 #[derive(Debug, Clone)]
 pub struct ForwarderConfig {
-    /// Path to the Unix socket to connect to
-    pub socket_path: PathBuf,
+    /// Address to connect to (Unix socket path or TCP host:port)
+    pub address: ForwarderAddress,
 
     /// Maximum number of traces to buffer before dropping
     pub queue_size: usize,
@@ -63,7 +88,7 @@ pub struct ForwarderConfig {
     /// Node display name advertised via the `NodeInfo` DataPoint.
     ///
     /// When `Some`, the forwarder responds to `"NodeInfo"` DataPoint requests
-    /// with `{"niName": name, ...}`, which `hermod-tracer` (and Haskell
+    /// with `{\"niName\": name, ...}`, which `hermod-tracer` (and Haskell
     /// `cardano-tracer`) use as the node's display name, Prometheus slug, and
     /// log subdirectory name.
     ///
@@ -75,7 +100,7 @@ pub struct ForwarderConfig {
 impl Default for ForwarderConfig {
     fn default() -> Self {
         Self {
-            socket_path: PathBuf::from("/tmp/hermod-tracer.sock"),
+            address: ForwarderAddress::default(),
             queue_size: 1000,
             max_reconnect_delay: 45,
             network_magic: 764824073,
@@ -118,6 +143,8 @@ pub struct TraceForwarder {
     handle: ForwarderHandle,
     /// When this forwarder process started (used in `NodeInfo` DataPoint replies)
     start_time: DateTime<Utc>,
+    /// Optional shared data-point store (serves named data points on request)
+    datapoint_store: Option<DataPointStore>,
 }
 
 impl TraceForwarder {
@@ -130,7 +157,18 @@ impl TraceForwarder {
             rx,
             handle,
             start_time: Utc::now(),
+            datapoint_store: None,
         }
+    }
+
+    /// Attach a [`DataPointStore`] so the forwarder can serve named data points
+    /// to the acceptor on request.
+    ///
+    /// The same store should be passed to [`DatapointBackend::with_store`] so
+    /// that dispatched trace objects are automatically stored and served.
+    pub fn with_datapoint_store(mut self, store: DataPointStore) -> Self {
+        self.datapoint_store = Some(store);
+        self
     }
 
     /// Get a handle for sending traces
@@ -163,12 +201,17 @@ impl TraceForwarder {
     }
 
     async fn connect_and_run(&mut self) -> Result<(), ForwarderError> {
-        debug!("Connecting to {}", self.config.socket_path.display());
-        let bearer = Bearer::connect_unix(&self.config.socket_path).await?;
-        info!(
-            "Connected to hermod-tracer at {}",
-            self.config.socket_path.display()
-        );
+        debug!("Connecting to {}", self.config.address);
+        let bearer = match &self.config.address {
+            ForwarderAddress::Unix(path) => Bearer::connect_unix(path).await?,
+            ForwarderAddress::Tcp(host, port) => {
+                let addr = format!("{}:{}", host, port);
+                Bearer::connect_tcp(&addr)
+                    .await
+                    .map_err(|e| std::io::Error::other(e.to_string()))?
+            }
+        };
+        info!("Connected to hermod-tracer at {}", self.config.address);
 
         let mut plexer = Plexer::new(bearer);
 
@@ -184,6 +227,9 @@ impl TraceForwarder {
         // resolve our display name.  We serialise a NodeInfo-compatible JSON
         // object so the acceptor can extract `niName` and use it as the node's
         // display name, Prometheus slug, and log subdirectory name.
+        //
+        // Any other named data point is looked up in the optional DataPointStore
+        // (set via `with_datapoint_store`).
         let node_info_bytes: Option<Vec<u8>> = self.config.node_name.as_deref().map(|name| {
             serde_json::json!({
                 "niName":            name,
@@ -197,6 +243,7 @@ impl TraceForwarder {
             .into_bytes()
         });
 
+        let dp_store = self.datapoint_store.clone();
         tokio::spawn(async move {
             let mut buf = ChannelBuffer::new(datapoint_channel);
             while let Ok(DataPointMessage::Request(names)) =
@@ -208,7 +255,7 @@ impl TraceForwarder {
                         let val = if n == "NodeInfo" {
                             node_info_bytes.clone()
                         } else {
-                            None
+                            dp_store.as_ref().and_then(|s| s.get(&n))
                         };
                         (n, val)
                     })
@@ -286,5 +333,15 @@ mod tests {
         let config = ForwarderConfig::default();
         assert_eq!(config.queue_size, 1000);
         assert_eq!(config.max_reconnect_delay, 45);
+        assert!(matches!(config.address, ForwarderAddress::Unix(_)));
+    }
+
+    #[test]
+    fn test_forwarder_address_display() {
+        let unix = ForwarderAddress::Unix(PathBuf::from("/tmp/test.sock"));
+        assert_eq!(unix.to_string(), "/tmp/test.sock");
+
+        let tcp = ForwarderAddress::Tcp("127.0.0.1".to_string(), 9090);
+        assert_eq!(tcp.to_string(), "127.0.0.1:9090");
     }
 }

@@ -12,7 +12,7 @@
 //! on stderr.
 
 use hermod::acceptor::{AcceptorConfig, TraceAcceptor};
-use hermod::forwarder::{ForwarderConfig, TraceForwarder};
+use hermod::forwarder::{ForwarderAddress, ForwarderConfig, TraceForwarder};
 use hermod::protocol::{DetailLevel, Severity, TraceObject};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -135,7 +135,7 @@ async fn test_rust_forwarder_to_haskell_acceptor() {
     );
 
     let forwarder = TraceForwarder::new(ForwarderConfig {
-        socket_path: socket,
+        address: ForwarderAddress::Unix(socket),
         network_magic: 764824073,
         max_reconnect_delay: 1,
         ..Default::default()
@@ -204,7 +204,7 @@ async fn test_rust_to_haskell_all_severities() {
     );
 
     let forwarder = TraceForwarder::new(ForwarderConfig {
-        socket_path: socket,
+        address: ForwarderAddress::Unix(socket),
         network_magic: 764824073,
         max_reconnect_delay: 1,
         ..Default::default()
@@ -271,7 +271,7 @@ async fn test_rust_to_haskell_all_detail_levels() {
     );
 
     let forwarder = TraceForwarder::new(ForwarderConfig {
-        socket_path: socket,
+        address: ForwarderAddress::Unix(socket),
         network_magic: 764824073,
         max_reconnect_delay: 1,
         ..Default::default()
@@ -340,7 +340,7 @@ async fn test_rust_to_haskell_edge_cases() {
     );
 
     let forwarder = TraceForwarder::new(ForwarderConfig {
-        socket_path: socket,
+        address: ForwarderAddress::Unix(socket),
         network_magic: 764824073,
         max_reconnect_delay: 1,
         ..Default::default()

@@ -4,7 +4,7 @@
 //! connects a forwarder that sends 10 traces, then asserts the log file exists
 //! and contains all 10 trace entries.
 
-use hermod::forwarder::{ForwarderConfig, TraceForwarder};
+use hermod::forwarder::{ForwarderAddress, ForwarderConfig, TraceForwarder};
 use hermod::protocol::types::{DetailLevel, Severity};
 use hermod::protocol::TraceObject;
 use hermod::server::{config::*, TracerServer};
@@ -63,7 +63,7 @@ async fn test_tracer_server_file_logging() {
 
     // Connect a forwarder and send 10 traces
     let fwd_config = ForwarderConfig {
-        socket_path: socket_path.clone(),
+        address: ForwarderAddress::Unix(socket_path.clone()),
         queue_size: 100,
         network_magic: 42,
         max_reconnect_delay: 5,

@@ -289,8 +289,10 @@ impl DispatcherBuilder {
                     );
                 }
                 BackendConfigKey::Datapoint => {
-                    self.backends
-                        .insert(BackendConfigKey::Datapoint, Arc::new(DatapointBackend));
+                    self.backends.insert(
+                        BackendConfigKey::Datapoint,
+                        Arc::new(DatapointBackend::new()),
+                    );
                 }
                 // Forwarder / EKG must be set up explicitly (they need external handles)
                 _ => {}

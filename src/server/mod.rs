@@ -54,7 +54,7 @@ pub mod reforwarder;
 pub mod rotation;
 pub mod trace_handler;
 
-use crate::forwarder::{ForwarderConfig, TraceForwarder};
+use crate::forwarder::{ForwarderAddress, ForwarderConfig, TraceForwarder};
 use crate::server::acceptor::run_network;
 use crate::server::config::TracerConfig;
 use crate::server::logging::LogWriter;
@@ -90,14 +90,18 @@ impl TracerServer {
         let reforwarder: Option<Arc<ReForwarder>> = if let Some(rf_cfg) = &config.has_forwarding {
             match &rf_cfg.network {
                 crate::server::config::Network::AcceptAt(addr) => {
-                    let socket_path = match addr {
-                        crate::server::config::Address::LocalPipe(p) => p.clone(),
-                        crate::server::config::Address::RemoteSocket(_, _) => {
-                            anyhow::bail!("TCP re-forwarding not yet supported; use Unix socket");
+                    // hermod-tracer acts as the trace-forward FORWARDER, connecting
+                    // out to the downstream acceptor's socket.
+                    let fwd_address = match addr {
+                        crate::server::config::Address::LocalPipe(p) => {
+                            ForwarderAddress::Unix(p.clone())
+                        }
+                        crate::server::config::Address::RemoteSocket(host, port) => {
+                            ForwarderAddress::Tcp(host.clone(), *port)
                         }
                     };
                     let fwd_config = ForwarderConfig {
-                        socket_path,
+                        address: fwd_address,
                         queue_size: rf_cfg.forwarder_opts.queue_size,
                         network_magic: config.network_magic as u64,
                         ..Default::default()
@@ -112,8 +116,22 @@ impl TracerServer {
                         rf_cfg.namespace_filters.clone(),
                     )))
                 }
-                crate::server::config::Network::ConnectTo(_) => {
-                    anyhow::bail!("ConnectTo re-forwarding not yet supported");
+                crate::server::config::Network::ConnectTo(addrs) => {
+                    // hermod-tracer listens; downstream acceptors connect to it.
+                    // We broadcast forwarded traces to all connected downstreams.
+                    let capacity = rf_cfg.forwarder_opts.queue_size.max(1);
+                    let (tx, _) = tokio::sync::broadcast::channel(capacity);
+                    let rf = Arc::new(ReForwarder::new_inbound(
+                        tx.clone(),
+                        rf_cfg.namespace_filters.clone(),
+                    ));
+                    let addrs = addrs.clone();
+                    let network_magic = config.network_magic as u64;
+                    tokio::spawn(async move {
+                        crate::server::reforwarder::run_accepting_loop(&addrs, tx, network_magic)
+                            .await;
+                    });
+                    Some(rf)
                 }
             }
         } else {

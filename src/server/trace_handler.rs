@@ -5,12 +5,15 @@
 //!
 //! 1. **File logging** — writes each trace to the appropriate log file via
 //!    [`LogWriter`], one file per `(node, logRoot, logFormat)` triple.
-//!    `JournalMode` entries are silently skipped (not implemented on this
-//!    platform).
 //!
-//! 2. **Re-forwarding** — if a [`ReForwarder`] is configured, passes the
+//! 2. **Journal logging** — on Unix/Linux, writes each trace to the systemd
+//!    journal via `/run/systemd/journal/socket` using the native journal
+//!    protocol.  On non-Unix platforms `JournalMode` is silently skipped.
+//!
+//! 3. **Re-forwarding** — if a [`ReForwarder`] is configured, passes the
 //!    (optionally namespace-filtered) batch on to the downstream forwarder.
 
+use crate::protocol::types::Severity;
 use crate::protocol::TraceObject;
 use crate::server::config::LogMode;
 use crate::server::logging::LogWriter;
@@ -29,14 +32,28 @@ pub async fn handle_traces(
     logging_params: &[crate::server::config::LoggingParams],
     reforwarder: Option<&ReForwarder>,
 ) {
-    // --- File logging ---
+    // --- File + Journal logging ---
     for params in logging_params {
-        if params.log_mode == LogMode::FileMode {
-            if let Err(e) = writer.write_traces(&node.name, params, &traces) {
-                warn!("Log write error for node {}: {}", node.name, e);
+        match params.log_mode {
+            LogMode::FileMode => {
+                if let Err(e) = writer.write_traces(&node.name, params, &traces) {
+                    warn!("Log write error for node {}: {}", node.name, e);
+                }
+            }
+            LogMode::JournalMode => {
+                #[cfg(unix)]
+                for trace in &traces {
+                    write_to_journal(trace, &node.name);
+                }
+                #[cfg(not(unix))]
+                {
+                    static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+                    WARNED.get_or_init(|| {
+                        warn!("JournalMode is not supported on this platform; log entries are discarded");
+                    });
+                }
             }
         }
-        // JournalMode: not implemented on this platform; skip silently
     }
 
     // --- Re-forwarding ---
@@ -106,4 +123,55 @@ fn sanitise_metric_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Journald integration (Unix only)
+// ---------------------------------------------------------------------------
+
+/// Write a single trace to the systemd journal via the native journal socket.
+///
+/// Uses the native journald protocol over a Unix datagram socket at
+/// `/run/systemd/journal/socket`.  All errors are silently ignored so that
+/// a missing or full journal socket never disrupts trace processing.
+///
+/// Each journal entry includes:
+/// - `PRIORITY` — syslog priority (0–7)
+/// - `SYSLOG_IDENTIFIER` — `"hermod-tracer"`
+/// - `HERMOD_NODE` — the node's display name
+/// - `HERMOD_NAMESPACE` — dot-joined trace namespace
+/// - `MESSAGE` — human text if available, otherwise the machine JSON
+#[cfg(unix)]
+fn write_to_journal(trace: &TraceObject, node_name: &str) {
+    use std::os::unix::net::UnixDatagram;
+
+    let priority = severity_to_journal_priority(trace.to_severity);
+    let namespace = trace.to_namespace.join(".");
+    let raw_message = trace.to_human.as_deref().unwrap_or(&trace.to_machine);
+    // Replace newlines so the message stays on one line (simple key=value format)
+    let message = raw_message.replace('\n', " ");
+
+    let payload = format!(
+        "PRIORITY={priority}\nSYSLOG_IDENTIFIER=hermod-tracer\n\
+         HERMOD_NODE={node_name}\nHERMOD_NAMESPACE={namespace}\n\
+         MESSAGE={message}\n"
+    );
+
+    if let Ok(socket) = UnixDatagram::unbound() {
+        let _ = socket.send_to(payload.as_bytes(), "/run/systemd/journal/socket");
+    }
+}
+
+#[cfg(unix)]
+fn severity_to_journal_priority(sev: Severity) -> u8 {
+    match sev {
+        Severity::Debug => 7,
+        Severity::Info => 6,
+        Severity::Notice => 5,
+        Severity::Warning => 4,
+        Severity::Error => 3,
+        Severity::Critical => 2,
+        Severity::Alert => 1,
+        Severity::Emergency => 0,
+    }
 }
