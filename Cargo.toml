@@ -1,9 +1,9 @@
 [package]
-name = "hermod"
+name = "hermod-tracer"
 version = "1.0.0"
 edition = "2021"
 authors = ["Samuel Leathers <samuel.leathers@iohk.io>"]
-description = "Rust tracer implementation of the Haskell hermod package"
+description = "Rust implementation of the Cardano tracing infrastructure"
 license = "Apache-2.0"
 
 [dependencies]
