@@ -64,7 +64,7 @@ pub struct ForwarderOptions {
 /// Top-level trace configuration
 ///
 /// Mirrors Haskell `TraceConfig`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TraceConfig {
     /// Namespace-keyed configuration options (longest-prefix-match lookup)
     pub options: BTreeMap<Vec<String>, Vec<ConfigOption>>,
@@ -72,16 +72,6 @@ pub struct TraceConfig {
     pub forwarder: Option<ForwarderOptions>,
     /// Optional human-readable node name
     pub node_name: Option<String>,
-}
-
-impl Default for TraceConfig {
-    fn default() -> Self {
-        Self {
-            options: BTreeMap::new(),
-            forwarder: None,
-            node_name: None,
-        }
-    }
 }
 
 impl TraceConfig {
@@ -96,7 +86,7 @@ impl TraceConfig {
         let mut key = ns.to_vec();
         loop {
             if let Some(opts) = self.options.get(&key) {
-                if let Some(v) = opts.iter().find_map(|o| selector(o)) {
+                if let Some(v) = opts.iter().find_map(&selector) {
                     return Some(v);
                 }
             }
@@ -214,6 +204,7 @@ enum RawSeverity {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(clippy::enum_variant_names)] // Haskell-compatible names: DMinimal, DNormal, etc.
 enum RawDetailLevel {
     DMinimal,
     DNormal,

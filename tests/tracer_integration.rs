@@ -138,7 +138,7 @@ logging:
   logMode: FileMode
   logFormat: ForMachine
 "#;
-    let cfg = TracerConfig::from_str(yaml).expect("parse minimal yaml");
+    let cfg = TracerConfig::from_yaml(yaml).expect("parse minimal yaml");
     assert_eq!(cfg.network_magic, 764824073);
     assert!(matches!(cfg.network, Network::AcceptAt(_)));
 }
@@ -146,10 +146,8 @@ logging:
 /// Verify that the bundled example config file parses successfully
 #[test]
 fn test_example_config_parses() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("config/hermod-tracer.yaml");
-    let cfg = TracerConfig::from_file(&path)
-        .expect("example config should parse");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/hermod-tracer.yaml");
+    let cfg = TracerConfig::from_file(&path).expect("example config should parse");
     assert_eq!(cfg.network_magic, 42);
     assert!(matches!(cfg.network, Network::AcceptAt(_)));
     assert!(!cfg.logging.is_empty());

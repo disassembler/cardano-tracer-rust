@@ -74,10 +74,7 @@ pub async fn run_prometheus_server(
 }
 
 /// GET / — list connected nodes
-async fn handle_root(
-    headers: HeaderMap,
-    State(ps): State<PrometheusState>,
-) -> Response {
+async fn handle_root(headers: HeaderMap, State(ps): State<PrometheusState>) -> Response {
     let nodes = ps.tracer_state.node_list().await;
 
     let wants_json = headers
@@ -119,10 +116,7 @@ async fn handle_targets(State(ps): State<PrometheusState>) -> impl IntoResponse 
         .iter()
         .map(|(id, slug)| {
             let mut labels = HashMap::new();
-            labels.insert(
-                "__metrics_path__".to_string(),
-                format!("/{}", slug),
-            );
+            labels.insert("__metrics_path__".to_string(), format!("/{}", slug));
             labels.insert("node_name".to_string(), id.clone());
             if let Some(extra) = &ps.extra_labels {
                 for (k, v) in extra {
@@ -179,7 +173,11 @@ async fn handle_node_metrics(
 ) -> Response {
     let node = ps.tracer_state.find_by_slug(&slug).await;
     match node {
-        None => (StatusCode::NOT_FOUND, format!("No node with slug '{}'", slug)).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            format!("No node with slug '{}'", slug),
+        )
+            .into_response(),
         Some(n) => {
             let encoder = prometheus::TextEncoder::new();
             let metric_families = n.registry.gather();

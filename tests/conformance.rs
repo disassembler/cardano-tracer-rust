@@ -723,7 +723,10 @@ fn test_ekg_message_round_trip() {
             let mut m = HashMap::new();
             m.insert("rts.gc.num_gcs".to_string(), EkgValue::Counter(42));
             m.insert("rts.gc.live_bytes".to_string(), EkgValue::Gauge(1024));
-            m.insert("node.version".to_string(), EkgValue::Label("1.35.0".to_string()));
+            m.insert(
+                "node.version".to_string(),
+                EkgValue::Label("1.35.0".to_string()),
+            );
             m
         }),
     ];

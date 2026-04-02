@@ -70,11 +70,11 @@ impl TracerConfig {
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("reading config file {}", path.display()))?;
-        Self::from_str(&content)
+        Self::from_yaml(&content)
     }
 
     /// Parse from a YAML string
-    pub fn from_str(yaml: &str) -> Result<Self> {
+    pub fn from_yaml(yaml: &str) -> Result<Self> {
         serde_yaml::from_str(yaml).context("parsing TracerConfig YAML")
     }
 
@@ -304,7 +304,7 @@ verbosity: ErrorsOnly
 
     #[test]
     fn test_parse_minimal_yaml() {
-        let cfg = TracerConfig::from_str(MINIMAL_YAML).unwrap();
+        let cfg = TracerConfig::from_yaml(MINIMAL_YAML).unwrap();
         assert_eq!(cfg.network_magic, 42);
         assert!(matches!(cfg.network, Network::AcceptAt(_)));
         if let Network::AcceptAt(addr) = &cfg.network {
@@ -318,7 +318,7 @@ verbosity: ErrorsOnly
 
     #[test]
     fn test_parse_complete_yaml() {
-        let cfg = TracerConfig::from_str(COMPLETE_YAML).unwrap();
+        let cfg = TracerConfig::from_yaml(COMPLETE_YAML).unwrap();
         assert_eq!(cfg.network_magic, 42);
         assert!(matches!(cfg.network, Network::ConnectTo(_)));
         if let Network::ConnectTo(addrs) = &cfg.network {
@@ -357,7 +357,7 @@ verbosity: ErrorsOnly
 
     #[test]
     fn test_lo_request_num_default() {
-        let cfg = TracerConfig::from_str(MINIMAL_YAML).unwrap();
+        let cfg = TracerConfig::from_yaml(MINIMAL_YAML).unwrap();
         assert_eq!(cfg.lo_request_num(), 100);
     }
 }

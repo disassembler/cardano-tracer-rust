@@ -47,7 +47,13 @@ pub async fn run_rotation_loop(
                 // Enforce age and count limits
                 let node_dir_name: String = node_id
                     .chars()
-                    .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
                     .collect();
                 let node_dir = lp.log_root.join(&node_dir_name);
                 if let Err(e) = prune_old_files(
@@ -100,7 +106,11 @@ fn prune_old_files(
         .filter_map(|e| {
             let path = e.path();
             // Skip symlinks
-            if path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            if path
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
                 return None;
             }
             let mtime = e
@@ -113,7 +123,7 @@ fn prune_old_files(
         .collect();
 
     // Sort newest-first
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|f| std::cmp::Reverse(f.1));
 
     let now = Utc::now();
     let max_age = chrono::Duration::hours(max_age_hours as i64);
@@ -124,8 +134,7 @@ fn prune_old_files(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            let file_dt =
-                chrono::DateTime::from_timestamp(mtime_secs as i64, 0).unwrap_or(now);
+            let file_dt = chrono::DateTime::from_timestamp(mtime_secs as i64, 0).unwrap_or(now);
             now.signed_duration_since(file_dt)
         };
 

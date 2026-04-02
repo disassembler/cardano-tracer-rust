@@ -26,7 +26,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Extension for a given log format
@@ -117,8 +117,7 @@ impl LogWriter {
         let mut handles = self.handles.lock().unwrap();
         if let Some(handle) = handles.get(&key) {
             if handle.bytes_written >= limit_bytes {
-                let new_handle =
-                    Self::open_new_file(&params.log_root, node_id, params.log_format)?;
+                let new_handle = Self::open_new_file(&params.log_root, node_id, params.log_format)?;
                 handles.insert(key, new_handle);
             }
         }
@@ -127,14 +126,20 @@ impl LogWriter {
 
     /// Open a new timestamped log file and update the `node.{ext}` symlink
     pub fn open_new_file(
-        log_root: &PathBuf,
+        log_root: &Path,
         node_id: &NodeId,
         format: LogFormat,
     ) -> io::Result<LogHandle> {
         // Sanitise node_id for use as a directory name
         let node_dir_name: String = node_id
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
 
         let node_dir = log_root.join(&node_dir_name);
@@ -144,10 +149,7 @@ impl LogWriter {
         let filename = format!("node-{}.{}", ts, ext(format));
         let path = node_dir.join(&filename);
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         // Atomically update symlink: write to .tmp then rename
         let link = node_dir.join(format!("node.{}", ext(format)));
@@ -190,10 +192,7 @@ pub fn format_trace(trace: &TraceObject, format: LogFormat) -> String {
 pub fn format_human(trace: &TraceObject) -> String {
     let ts = trace.to_timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ");
     let ns = trace.to_namespace.join(".");
-    let msg = trace
-        .to_human
-        .as_deref()
-        .unwrap_or(&trace.to_machine);
+    let msg = trace.to_human.as_deref().unwrap_or(&trace.to_machine);
     format!("{} [{}] {} {}\n", ts, trace.to_severity, ns, msg)
 }
 
@@ -255,7 +254,9 @@ mod tests {
 
         let writer = LogWriter::new();
         let traces = vec![make_trace()];
-        writer.write_traces(&"test-node".to_string(), &params, &traces).unwrap();
+        writer
+            .write_traces(&"test-node".to_string(), &params, &traces)
+            .unwrap();
 
         // Find the written file
         let node_dir = log_root.join("test-node");

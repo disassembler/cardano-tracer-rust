@@ -4,7 +4,7 @@
 //! instance, which holds:
 //!
 //! - A unique [`NodeId`] (the socket path or `ip:port` of the connection)
-//! - A URL-safe [`NodeSlug`] derived from the `NodeId` for Prometheus routes
+//! - A URL-safe [`NodeSlug`] derived from the node's display name for Prometheus routes
 //! - A dedicated [`prometheus::Registry`] that accumulates EKG metrics for
 //!   that node
 //! - The connection timestamp
@@ -23,7 +23,7 @@ use tokio::sync::RwLock;
 /// Unique identifier for a connected node (socket path or ip:port)
 pub type NodeId = String;
 
-/// URL-safe slug derived from NodeId, used as Prometheus route segment
+/// URL-safe slug derived from the node's display name, used as Prometheus route segment
 pub type NodeSlug = String;
 
 /// All state associated with one connected node

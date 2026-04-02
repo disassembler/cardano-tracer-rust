@@ -42,9 +42,7 @@ pub async fn run_network(
 ) -> anyhow::Result<()> {
     match network {
         Network::AcceptAt(addr) => run_accept_server(addr, state, writer, reforwarder).await,
-        Network::ConnectTo(addrs) => {
-            run_connect_clients(addrs, state, writer, reforwarder).await
-        }
+        Network::ConnectTo(addrs) => run_connect_clients(addrs, state, writer, reforwarder).await,
     }
 }
 
@@ -68,7 +66,13 @@ async fn run_accept_server(
                 let (bearer, _) = Bearer::accept_unix(&listener).await?;
                 counter += 1;
                 let node_id = format!("unix-{}", counter);
-                spawn_handler(bearer, node_id, state.clone(), writer.clone(), reforwarder.clone());
+                spawn_handler(
+                    bearer,
+                    node_id,
+                    state.clone(),
+                    writer.clone(),
+                    reforwarder.clone(),
+                );
             }
         }
         Address::RemoteSocket(host, port) => {
@@ -78,7 +82,13 @@ async fn run_accept_server(
             loop {
                 let (bearer, peer) = Bearer::accept_tcp(&listener).await?;
                 let node_id = peer.to_string();
-                spawn_handler(bearer, node_id, state.clone(), writer.clone(), reforwarder.clone());
+                spawn_handler(
+                    bearer,
+                    node_id,
+                    state.clone(),
+                    writer.clone(),
+                    reforwarder.clone(),
+                );
             }
         }
     }
@@ -131,14 +141,24 @@ async fn connect_with_retry(
         match bearer_result {
             Ok(bearer) => {
                 delay = 1; // reset on success
-                if let Err(e) =
-                    handle_connection(bearer, node_id.clone(), state.clone(), writer.clone(), reforwarder.clone(), true).await
+                if let Err(e) = handle_connection(
+                    bearer,
+                    node_id.clone(),
+                    state.clone(),
+                    writer.clone(),
+                    reforwarder.clone(),
+                    true,
+                )
+                .await
                 {
                     warn!("Connection to {} ended: {}", node_id, e);
                 }
             }
             Err(e) => {
-                warn!("Failed to connect to {}: {}, retrying in {}s", node_id, e, delay);
+                warn!(
+                    "Failed to connect to {}: {}, retrying in {}s",
+                    node_id, e, delay
+                );
             }
         }
 
@@ -214,11 +234,15 @@ async fn handle_connection(
 
     if is_initiator {
         // We send Propose
-        hs.send_msg_chunks(&HandshakeMessage::Propose(versions)).await?;
+        hs.send_msg_chunks(&HandshakeMessage::Propose(versions))
+            .await?;
         let resp: HandshakeMessage = hs.recv_full_msg().await?;
         match resp {
             HandshakeMessage::Accept(ver, data) => {
-                info!("Handshake accepted v={} magic={} node={}", ver, data.network_magic, node_id);
+                info!(
+                    "Handshake accepted v={} magic={} node={}",
+                    ver, data.network_magic, node_id
+                );
             }
             HandshakeMessage::Refuse(_) => {
                 anyhow::bail!("Handshake refused by {}", node_id);
@@ -237,16 +261,15 @@ async fn handle_connection(
                     .copied();
                 match chosen {
                     Some(ver) => {
-                        let accept = HandshakeMessage::Accept(
-                            ver,
-                            ForwardingVersionData { network_magic },
-                        );
+                        let accept =
+                            HandshakeMessage::Accept(ver, ForwardingVersionData { network_magic });
                         hs.send_msg_chunks(&accept).await?;
                         debug!("Handshake accepted v={} for {}", ver, node_id);
                     }
                     None => {
                         let offered: Vec<u64> = proposed.into_keys().collect();
-                        hs.send_msg_chunks(&HandshakeMessage::Refuse(offered)).await?;
+                        hs.send_msg_chunks(&HandshakeMessage::Refuse(offered))
+                            .await?;
                         anyhow::bail!("No compatible version with {}", node_id);
                     }
                 }
@@ -263,7 +286,10 @@ async fn handle_connection(
 
     // Register node
     let node = state.register(node_id.clone(), node_name).await;
-    info!("Node connected: {} name={} (slug={})", node_id, node.name, node.slug);
+    info!(
+        "Node connected: {} name={} (slug={})",
+        node_id, node.name, node.slug
+    );
 
     // Launch sub-tasks in a JoinSet so we can cancel on first exit
     let mut tasks: JoinSet<()> = JoinSet::new();
@@ -282,14 +308,7 @@ async fn handle_connection(
                 match client.request_traces(request_count).await {
                     Ok(traces) => {
                         debug!("Received {} traces from {}", traces.len(), node.id);
-                        handle_traces(
-                            traces,
-                            &node,
-                            &writer,
-                            &logging,
-                            rf.as_deref(),
-                        )
-                        .await;
+                        handle_traces(traces, &node, &writer, &logging, rf.as_deref()).await;
                     }
                     Err(e) => {
                         info!("Trace loop ended for {}: {}", node.id, e);
@@ -305,8 +324,11 @@ async fn handle_connection(
         let node = node.clone();
         let config = config.clone();
         tasks.spawn(async move {
-            let mut poller =
-                EkgPoller::new(ekg_ch, node.clone(), config.ekg_request_full.unwrap_or(false));
+            let mut poller = EkgPoller::new(
+                ekg_ch,
+                node.clone(),
+                config.ekg_request_full.unwrap_or(false),
+            );
             poller.run_poll_loop(config.ekg_request_freq()).await;
         });
     } else {

@@ -66,9 +66,15 @@ impl Encode<()> for EkgValue {
     ) -> Result<(), minicbor::encode::Error<W::Error>> {
         e.array(2)?;
         match self {
-            EkgValue::Counter(v) => { e.u8(0)?.i64(*v)?; }
-            EkgValue::Gauge(v)   => { e.u8(1)?.i64(*v)?; }
-            EkgValue::Label(s)   => { e.u8(2)?.str(s)?; }
+            EkgValue::Counter(v) => {
+                e.u8(0)?.i64(*v)?;
+            }
+            EkgValue::Gauge(v) => {
+                e.u8(1)?.i64(*v)?;
+            }
+            EkgValue::Label(s) => {
+                e.u8(2)?.str(s)?;
+            }
         }
         Ok(())
     }
@@ -164,13 +170,18 @@ impl<'b> Decode<'b, ()> for EkgMessage {
                 let mut metrics = HashMap::new();
                 let mut count = 0u64;
                 loop {
-                    if list_len.is_none() {
-                        if d.datatype()? == Type::Break {
-                            d.skip()?;
-                            break;
+                    match list_len {
+                        None => {
+                            if d.datatype()? == Type::Break {
+                                d.skip()?;
+                                break;
+                            }
                         }
-                    } else if count >= list_len.unwrap() {
-                        break;
+                        Some(n) => {
+                            if count >= n {
+                                break;
+                            }
+                        }
                     }
                     // Each element is array(2)[text(name), metricvalue]
                     d.array()?;
@@ -181,7 +192,9 @@ impl<'b> Decode<'b, ()> for EkgMessage {
                 }
                 Ok(EkgMessage::Resp(metrics))
             }
-            _ => Err(minicbor::decode::Error::message("unknown EKG message format")),
+            _ => Err(minicbor::decode::Error::message(
+                "unknown EKG message format",
+            )),
         }
     }
 }
@@ -263,7 +276,10 @@ impl EkgPoller {
                 &self.counter_cache,
                 &self.counter_values,
             ) {
-                debug!("EKG registry error for {}/{}: {}", self.node_state.id, name, e);
+                debug!(
+                    "EKG registry error for {}/{}: {}",
+                    self.node_state.id, name, e
+                );
             }
         }
     }
@@ -318,8 +334,8 @@ fn get_or_create_gauge(
         return Ok(g.clone());
     }
     let opts = Opts::new(sanitise_name(name), name.to_string());
-    let g = GaugeVec::new(opts, &[])
-        .map_err(|e| anyhow::anyhow!("create gauge {}: {}", name, e))?;
+    let g =
+        GaugeVec::new(opts, &[]).map_err(|e| anyhow::anyhow!("create gauge {}: {}", name, e))?;
     registry
         .register(Box::new(g.clone()))
         .map_err(|e| anyhow::anyhow!("register gauge {}: {}", name, e))?;
@@ -348,6 +364,12 @@ fn get_or_create_counter(
 
 fn sanitise_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }

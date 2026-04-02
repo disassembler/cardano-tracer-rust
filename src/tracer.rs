@@ -23,25 +23,36 @@ impl JsonVisitor {
 
 impl Visit for JsonVisitor {
     fn record_f64(&mut self, field: &Field, value: f64) {
-        self.0.insert(field.name().to_string(), serde_json::json!(value));
+        self.0
+            .insert(field.name().to_string(), serde_json::json!(value));
     }
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.0.insert(field.name().to_string(), serde_json::json!(value));
+        self.0
+            .insert(field.name().to_string(), serde_json::json!(value));
     }
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.0.insert(field.name().to_string(), serde_json::json!(value));
+        self.0
+            .insert(field.name().to_string(), serde_json::json!(value));
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.0.insert(field.name().to_string(), serde_json::json!(value));
+        self.0
+            .insert(field.name().to_string(), serde_json::json!(value));
     }
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.0.insert(field.name().to_string(), serde_json::json!(value));
+        self.0
+            .insert(field.name().to_string(), serde_json::json!(value));
     }
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        self.0.insert(field.name().to_string(), serde_json::json!(format!("{value:?}")));
+        self.0.insert(
+            field.name().to_string(),
+            serde_json::json!(format!("{value:?}")),
+        );
     }
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
-        self.0.insert(field.name().to_string(), serde_json::json!(value.to_string()));
+        self.0.insert(
+            field.name().to_string(),
+            serde_json::json!(value.to_string()),
+        );
     }
 }
 
@@ -131,7 +142,11 @@ impl TraceForwarderLayer {
         let segments: Vec<String> = if target.contains("::") {
             target.split("::").map(|s| s.to_string()).collect()
         } else {
-            target.split('.').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
+            target
+                .split('.')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
         };
         namespace.extend(segments);
         namespace
@@ -156,8 +171,7 @@ where
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let to_machine = serde_json::to_string(&visitor.0)
-            .unwrap_or_else(|_| "{}".to_string());
+        let to_machine = serde_json::to_string(&visitor.0).unwrap_or_else(|_| "{}".to_string());
 
         let trace_obj = TraceObject {
             to_human: human,

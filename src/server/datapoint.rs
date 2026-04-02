@@ -52,7 +52,9 @@ impl Encode<()> for DataPointMessage {
                     e.array(2)?;
                     e.str(name)?;
                     match value {
-                        None => { e.array(0)?; }
+                        None => {
+                            e.array(0)?;
+                        }
                         Some(bytes) => {
                             e.array(1)?;
                             e.bytes(bytes)?;
@@ -120,7 +122,9 @@ impl<'b> Decode<'b, ()> for DataPointMessage {
 /// for `Just bs`.  The bytes may be indefinite-length (Haskell encodes
 /// `LBS.ByteString` via `encodeBytesIndef`), so we use `bytes_iter()` which
 /// handles both definite and indefinite byte strings.
-fn decode_reply_item(d: &mut Decoder<'_>) -> Result<(String, Option<Vec<u8>>), minicbor::decode::Error> {
+fn decode_reply_item(
+    d: &mut Decoder<'_>,
+) -> Result<(String, Option<Vec<u8>>), minicbor::decode::Error> {
     d.array()?; // array(2) for the tuple
     let name = d.str()?.to_string();
 
@@ -185,9 +189,7 @@ impl DataPointClient {
                     .collect();
                 Ok(parsed)
             }
-            DataPointMessage::Done => {
-                Err(Error::Decoding("DataPoint connection closed".into()))
-            }
+            DataPointMessage::Done => Err(Error::Decoding("DataPoint connection closed".into())),
             DataPointMessage::Request(_) => {
                 Err(Error::Decoding("unexpected Request from forwarder".into()))
             }

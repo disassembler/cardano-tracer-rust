@@ -165,19 +165,16 @@ impl TraceForwarder {
         // connection-address node ID.
         tokio::spawn(async move {
             let mut buf = ChannelBuffer::new(datapoint_channel);
-            loop {
-                match buf.recv_full_msg::<DataPointMessage>().await {
-                    Ok(DataPointMessage::Request(names)) => {
-                        let reply: Vec<_> = names.into_iter().map(|n| (n, None)).collect();
-                        if buf
-                            .send_msg_chunks(&DataPointMessage::Reply(reply))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    _ => break,
+            while let Ok(DataPointMessage::Request(names)) =
+                buf.recv_full_msg::<DataPointMessage>().await
+            {
+                let reply: Vec<_> = names.into_iter().map(|n| (n, None)).collect();
+                if buf
+                    .send_msg_chunks(&DataPointMessage::Reply(reply))
+                    .await
+                    .is_err()
+                {
+                    break;
                 }
             }
         });
